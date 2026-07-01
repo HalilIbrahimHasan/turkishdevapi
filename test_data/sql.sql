@@ -160,9 +160,51 @@ FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_NAME='Enrollments_TEST'
 ORDER BY ORDINAL_POSITION;
 
+=============
 
+SELECT
+    coverage_year,
+    hios_issuer_id,
+    MONTH(GAA_Load_Datetime) AS load_month,
+    COUNT(*) AS row_count,
+    COUNT(DISTINCT enrollment_id) AS enrollment_count,
+    COUNT(DISTINCT enrollee_id) AS enrollee_count
+FROM dbo.Enrollments_TEST
+WHERE coverage_year = 2025
+GROUP BY
+    coverage_year,
+    hios_issuer_id,
+    MONTH(GAA_Load_Datetime)
+ORDER BY
+    hios_issuer_id,
+    load_month;
 
+====
 
+SELECT
+    coverage_year,
+    hios_issuer_id,
+    MONTH(GAA_Load_Datetime) AS load_month,
+    Insurance_Type,
+    enrollment_status_description,
+    enrollee_status_description,
+    COUNT(*) AS row_count,
+    COUNT(DISTINCT enrollment_id) AS enrollment_count,
+    COUNT(DISTINCT enrollee_id) AS enrollee_count
+FROM dbo.Enrollments_TEST
+WHERE coverage_year = 2025
+GROUP BY
+    coverage_year,
+    hios_issuer_id,
+    MONTH(GAA_Load_Datetime),
+    Insurance_Type,
+    enrollment_status_description,
+    enrollee_status_description
+ORDER BY
+    hios_issuer_id,
+    load_month,
+    enrollment_status_description,
+    enrollee_status_description;
 
 
 
