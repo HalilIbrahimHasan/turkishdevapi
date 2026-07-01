@@ -72,3 +72,41 @@ ORDER BY
     Load_Month;
 
 Cursor logic’i de gönder cicim. Özellikle şunları görmem lazım:
+
+SELECT
+    '834_Inbound_test' AS table_name,
+    COUNT(*) AS total_count,
+    COUNT(DISTINCT GAA_HIOS_ID) AS issuer_count,
+    MIN(GAA_834_File_Date) AS min_file_date,
+    MAX(GAA_834_File_Date) AS max_file_date
+FROM dbo.[834_Inbound_test]
+
+UNION ALL
+
+SELECT
+    '834_Inbound_header_test',
+    COUNT(*),
+    COUNT(DISTINCT GAA_HIOS_ID),
+    MIN(GAA_834_File_Date),
+    MAX(GAA_834_File_Date)
+FROM dbo.[834_Inbound_header_test];
+
+Sonra business-ready adayları için bunu çalıştır:
+
+SELECT
+    'Enrollments_PY2025' AS table_name,
+    COUNT(*) AS total_count,
+    COUNT(DISTINCT hios_issuer_id) AS issuer_count,
+    MIN(GAA_Load_Date) AS min_load_date,
+    MAX(GAA_Load_Date) AS max_load_date
+FROM dbo.Enrollments_PY2025
+
+UNION ALL
+
+SELECT
+    'PY2025-Enrollments_All',
+    COUNT(*),
+    COUNT(DISTINCT hios_issuer_id),
+    MIN(GAA_Load_Date),
+    MAX(GAA_Load_Date)
+FROM dbo.[PY2025-Enrollments_All];
