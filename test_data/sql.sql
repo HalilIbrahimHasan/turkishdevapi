@@ -116,3 +116,19 @@ SELECT COLUMN_NAME
 FROM INFORMATION_SCHEMA.COLUMNS
 WHERE TABLE_NAME = 'PY2025-Enrollments_All'
 ORDER BY ORDINAL_POSITION;
+
+
+SELECT
+    t.name AS table_name,
+    SUM(p.rows) AS row_count
+FROM sys.tables t
+JOIN sys.partitions p
+    ON t.object_id = p.object_id
+WHERE p.index_id IN (0,1)
+  AND (
+        t.name LIKE '%834%'
+     OR t.name LIKE '%Inbound%'
+     OR t.name LIKE '%Enroll%'
+  )
+GROUP BY t.name
+ORDER BY row_count DESC;
