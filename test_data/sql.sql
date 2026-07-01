@@ -233,6 +233,61 @@ HAVING COUNT(*)>1
 ORDER BY repeats DESC;
 
 
+========================
+
+SELECT
+    t.name AS table_name,
+    c.name AS column_name
+FROM sys.tables t
+JOIN sys.columns c
+ON t.object_id=c.object_id
+WHERE
+c.name IN
+(
+'GAA_HIOS_ID',
+'memberMaintEffectiveDate',
+'exchgAssignedPolicyID',
+'exchgIndivIdentifier',
+'memberSSN',
+'policyID',
+'enrollment_id',
+'enrollee_id'
+)
+ORDER BY
+t.name;
+
+
+SELECT
+    t.name,
+    SUM(p.rows) rows
+FROM sys.tables t
+JOIN sys.partitions p
+ON t.object_id=p.object_id
+WHERE p.index_id IN (0,1)
+GROUP BY
+t.name
+HAVING
+SUM(p.rows)>100000
+ORDER BY
+rows DESC;
+
+
+
+SELECT
+TABLE_SCHEMA,
+TABLE_NAME,
+COLUMN_NAME
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE
+COLUMN_NAME LIKE '%memberMaint%'
+OR COLUMN_NAME LIKE '%policy%'
+OR COLUMN_NAME LIKE '%HIOS%'
+OR COLUMN_NAME LIKE '%exchg%'
+OR COLUMN_NAME LIKE '%834%'
+ORDER BY
+TABLE_NAME;
+
+
 
 
 
