@@ -206,7 +206,31 @@ ORDER BY
     enrollment_status_description,
     enrollee_status_description;
 
+=================
 
+
+SELECT
+    COUNT(*) AS rows,
+    COUNT(DISTINCT enrollment_id) AS enrollments,
+    COUNT(DISTINCT enrollee_id) AS enrollees,
+    COUNT(DISTINCT household_id) AS households
+FROM dbo.Enrollments_TEST
+WHERE coverage_year=2025
+AND hios_issuer_id=13535
+AND MONTH(GAA_Load_Datetime)=6;
+
+Sonra bir tane daha:
+
+SELECT
+    enrollment_id,
+    COUNT(*) AS repeats
+FROM dbo.Enrollments_TEST
+WHERE coverage_year=2025
+AND hios_issuer_id=13535
+AND MONTH(GAA_Load_Datetime)=6
+GROUP BY enrollment_id
+HAVING COUNT(*)>1
+ORDER BY repeats DESC;
 
 
 
