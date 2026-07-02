@@ -1,4 +1,19 @@
 
+SELECT
+    GAA_HIOS_ID AS Issuer,
+    COUNT(*) AS Total_Rows,
+    COUNT(DISTINCT GAA_834_File_Name) AS Total_Files,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS Distinct_Policies,
+    COUNT(DISTINCT exchgIndivIdentifier) AS Distinct_Members,
+    MIN(GAA_834_File_Date) AS First_File_Date,
+    MAX(GAA_834_File_Date) AS Last_File_Date
+FROM dbo.[834_Inbound_test]
+GROUP BY
+    GAA_HIOS_ID
+ORDER BY
+    GAA_HIOS_ID;
+
+====================
 
 SELECT
     [GAA_HIOS_ID] AS Issuer,
