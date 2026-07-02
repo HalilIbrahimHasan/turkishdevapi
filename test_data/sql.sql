@@ -1,3 +1,29 @@
+
+SELECT TOP 200
+    exchgAssignedPolicyID,
+    exchgIndivIdentifier,
+    Insurance_Type,
+    enrolleeStatus,
+    memberMaintEffectiveDate,
+    GAA_834_File_Date,
+    GAA_834_File_Name
+FROM dbo.[834_Inbound_test]
+WHERE
+    Coverage_Year = 2025
+    AND GAA_HIOS_ID = 15105
+    AND YEAR(GAA_834_File_Date)=2025
+    AND MONTH(GAA_834_File_Date)=10
+    AND exchgAssignedPolicyID = '<bir policy>'
+ORDER BY
+memberMaintEffectiveDate,
+GAA_834_File_Date;
+
+
+
+
+
+======================
+
 -- 2025 raw 834 DB counts by issuer and month
 SELECT
     Coverage_Year,
