@@ -1,4 +1,38 @@
 
+SELECT
+    [GAA_834_File_Name],
+    COUNT(*) AS Row_Count,
+    COUNT(DISTINCT [exchgAssignedPolicyID]) AS Policy_Count,
+    COUNT(DISTINCT [exchgIndivIdentifier]) AS Member_Count
+FROM dbo.[834_Inbound_test]
+WHERE [Coverage_Year] = 2025
+  AND [GAA_HIOS_ID] = 15105
+  AND YEAR([GAA_834_File_Date]) = 2025
+  AND MONTH([GAA_834_File_Date]) = 10
+GROUP BY
+    [GAA_834_File_Name]
+ORDER BY
+    Row_Count DESC;
+
+
+
+SELECT
+    [GAA_834_File_Name],
+    [enrolleeStatus],
+    COUNT(*) AS Row_Count
+FROM dbo.[834_Inbound_test]
+WHERE [Coverage_Year] = 2025
+  AND [GAA_HIOS_ID] = 15105
+  AND YEAR([GAA_834_File_Date]) = 2025
+  AND MONTH([GAA_834_File_Date]) = 10
+GROUP BY
+    [GAA_834_File_Name],
+    [enrolleeStatus]
+ORDER BY
+    [GAA_834_File_Name],
+    [enrolleeStatus];
+
+==================
 
 SELECT
     [exchgAssignedPolicyID],
