@@ -338,6 +338,31 @@ ORDER BY
     TABLE_NAME,
     COLUMN_NAME;
 
+=====================
+
+SELECT
+    COUNT(*) AS RawRows,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS Policies,
+    COUNT(DISTINCT exchgIndivIdentifier) AS Members,
+    MIN(GAA_834_File_Date) AS FirstFile,
+    MAX(GAA_834_File_Date) AS LastFile
+FROM dbo.834_Inbound_test;
+
+
+SELECT
+    GAA_HIOS_ID,
+    YEAR(GAA_834_File_Date) AS FileYear,
+    MONTH(GAA_834_File_Date) AS FileMonth,
+    COUNT(*) AS RawRows
+FROM dbo.834_Inbound_test
+GROUP BY
+    GAA_HIOS_ID,
+    YEAR(GAA_834_File_Date),
+    MONTH(GAA_834_File_Date)
+ORDER BY
+    GAA_HIOS_ID,
+    FileYear,
+    FileMonth;
 
 
 
