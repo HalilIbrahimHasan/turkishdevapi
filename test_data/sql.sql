@@ -419,3 +419,15 @@ GAA_HIOS_ID
 ORDER BY
 GAA_HIOS_ID;
 
+============
+
+SELECT
+    COUNT(DISTINCT GAA_HIOS_ID) AS IssuerCount
+FROM dbo.[834_Inbound_test];
+
+
+SELECT DISTINCT
+    GAA_HIOS_ID
+FROM dbo.[834_Inbound_test]
+ORDER BY GAA_HIOS_ID;
+
