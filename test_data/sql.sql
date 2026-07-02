@@ -578,3 +578,56 @@ SELECT
 FROM normalized
 GROUP BY GAA_HIOS_ID
 ORDER BY GAA_HIOS_ID;
+
+
+============
+
+
+;WITH status_mapped AS
+(
+    SELECT
+        GAA_HIOS_ID,
+        YEAR(GAA_834_File_Date) AS FileYear,
+        MONTH(GAA_834_File_Date) AS FileMonth,
+        Insurance_Type,
+        CASE
+            WHEN UPPER(enrolleeStatus) IN ('CONFIRM','CONFIRMED','CONFIRMATION','REINSTATE','REINSTATED','ACTIVE','ENROLLED','EFFECTUATED','EC')
+              OR UPPER(enrolleeStatus) LIKE '%CONFIRM%'
+              OR UPPER(enrolleeStatus) LIKE '%REINSTATE%'
+                THEN 'CONFIRM'
+            WHEN UPPER(enrolleeStatus) IN ('CANCEL','CANCELLED','CANCELED','CANCELLATION')
+              OR UPPER(enrolleeStatus) LIKE '%CANCEL%'
+                THEN 'CANCEL'
+            WHEN UPPER(enrolleeStatus) IN ('TERM','TERMINATED','TERMINATION')
+              OR UPPER(enrolleeStatus) LIKE '%TERM%'
+                THEN 'TERM'
+            ELSE 'UNKNOWN'
+        END AS BusinessStatus,
+        exchgAssignedPolicyID,
+        exchgIndivIdentifier
+    FROM dbo.[834_Inbound_test]
+    WHERE Coverage_Year = 2025
+      AND GAA_HIOS_ID IN (13535,15105,43802)
+)
+SELECT
+    GAA_HIOS_ID,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    BusinessStatus,
+    COUNT(*) AS RowCount,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS Enrollment_Count,
+    COUNT(DISTINCT exchgIndivIdentifier) AS Enrollee_Count
+FROM status_mapped
+GROUP BY
+    GAA_HIOS_ID,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    BusinessStatus
+ORDER BY
+    GAA_HIOS_ID,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    BusinessStatus;
