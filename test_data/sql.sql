@@ -591,15 +591,15 @@ ORDER BY GAA_HIOS_ID;
         MONTH(GAA_834_File_Date) AS FileMonth,
         Insurance_Type,
         CASE
-            WHEN UPPER(enrolleeStatus) IN ('CONFIRM','CONFIRMED','CONFIRMATION','REINSTATE','REINSTATED','ACTIVE','ENROLLED','EFFECTUATED','EC')
-              OR UPPER(enrolleeStatus) LIKE '%CONFIRM%'
-              OR UPPER(enrolleeStatus) LIKE '%REINSTATE%'
+            WHEN UPPER(ISNULL(enrolleeStatus,'')) IN ('CONFIRM','CONFIRMED','CONFIRMATION','REINSTATE','REINSTATED','ACTIVE','ENROLLED','EFFECTUATED','EC')
+              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%CONFIRM%'
+              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%REINSTATE%'
                 THEN 'CONFIRM'
-            WHEN UPPER(enrolleeStatus) IN ('CANCEL','CANCELLED','CANCELED','CANCELLATION')
-              OR UPPER(enrolleeStatus) LIKE '%CANCEL%'
+            WHEN UPPER(ISNULL(enrolleeStatus,'')) IN ('CANCEL','CANCELLED','CANCELED','CANCELLATION')
+              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%CANCEL%'
                 THEN 'CANCEL'
-            WHEN UPPER(enrolleeStatus) IN ('TERM','TERMINATED','TERMINATION')
-              OR UPPER(enrolleeStatus) LIKE '%TERM%'
+            WHEN UPPER(ISNULL(enrolleeStatus,'')) IN ('TERM','TERMINATED','TERMINATION')
+              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%TERM%'
                 THEN 'TERM'
             ELSE 'UNKNOWN'
         END AS BusinessStatus,
@@ -610,24 +610,24 @@ ORDER BY GAA_HIOS_ID;
       AND GAA_HIOS_ID IN (13535,15105,43802)
 )
 SELECT
-    GAA_HIOS_ID,
-    FileYear,
-    FileMonth,
-    Insurance_Type,
-    BusinessStatus,
+    sm.GAA_HIOS_ID,
+    sm.FileYear,
+    sm.FileMonth,
+    sm.Insurance_Type,
+    sm.BusinessStatus,
     COUNT(*) AS RowCount,
-    COUNT(DISTINCT exchgAssignedPolicyID) AS Enrollment_Count,
-    COUNT(DISTINCT exchgIndivIdentifier) AS Enrollee_Count
-FROM status_mapped
+    COUNT(DISTINCT sm.exchgAssignedPolicyID) AS Enrollment_Count,
+    COUNT(DISTINCT sm.exchgIndivIdentifier) AS Enrollee_Count
+FROM status_mapped sm
 GROUP BY
-    GAA_HIOS_ID,
-    FileYear,
-    FileMonth,
-    Insurance_Type,
-    BusinessStatus
+    sm.GAA_HIOS_ID,
+    sm.FileYear,
+    sm.FileMonth,
+    sm.Insurance_Type,
+    sm.BusinessStatus
 ORDER BY
-    GAA_HIOS_ID,
-    FileYear,
-    FileMonth,
-    Insurance_Type,
-    BusinessStatus;
+    sm.GAA_HIOS_ID,
+    sm.FileYear,
+    sm.FileMonth,
+    sm.Insurance_Type,
+    sm.BusinessStatus;
