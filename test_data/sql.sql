@@ -1,6 +1,38 @@
 
 
 SELECT
+    [GAA_HIOS_ID] AS Issuer,
+    [Coverage_Year],
+    YEAR([GAA_834_File_Date]) AS FileYear,
+    MONTH([GAA_834_File_Date]) AS FileMonth,
+    [Insurance_Type],
+    [enrolleeStatus],
+    [GAA_834_File_Name] AS Source_File,
+    COUNT(*) AS SQL_Row_Count,
+    COUNT(DISTINCT [exchgAssignedPolicyID]) AS SQL_Policy_Count,
+    COUNT(DISTINCT [exchgIndivIdentifier]) AS SQL_Member_Count
+FROM dbo.[834_Inbound_test]
+WHERE [GAA_HIOS_ID] IN (13535,15105,43802)
+  AND [Coverage_Year] = 2025
+GROUP BY
+    [GAA_HIOS_ID],
+    [Coverage_Year],
+    YEAR([GAA_834_File_Date]),
+    MONTH([GAA_834_File_Date]),
+    [Insurance_Type],
+    [enrolleeStatus],
+    [GAA_834_File_Name]
+ORDER BY
+    Issuer,
+    FileYear,
+    FileMonth,
+    [Insurance_Type],
+    [enrolleeStatus],
+    Source_File;
+
+====================
+
+SELECT
     GAA_HIOS_ID,
     YEAR(GAA_834_File_Date) AS FileYear,
     MONTH(GAA_834_File_Date) AS FileMonth,
