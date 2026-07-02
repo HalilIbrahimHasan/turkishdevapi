@@ -323,6 +323,22 @@ ORDER BY
     month_num;
 
 
+SELECT
+    TABLE_NAME,
+    COLUMN_NAME
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE
+    COLUMN_NAME LIKE '%GAA_834%'
+    OR COLUMN_NAME LIKE '%834_File%'
+    OR COLUMN_NAME LIKE '%memberMaint%'
+    OR COLUMN_NAME LIKE '%exchgAssigned%'
+    OR COLUMN_NAME LIKE '%exchgIndiv%'
+    OR COLUMN_NAME LIKE '%healthCoveragePolicy%'
+ORDER BY
+    TABLE_NAME,
+    COLUMN_NAME;
+
+
 
 
 
