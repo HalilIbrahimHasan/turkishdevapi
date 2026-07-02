@@ -583,51 +583,79 @@ ORDER BY GAA_HIOS_ID;
 ============
 
 
-;WITH status_mapped AS
+
+;WITH normalized AS
 (
     SELECT
         GAA_HIOS_ID,
+        Coverage_Year,
         YEAR(GAA_834_File_Date) AS FileYear,
         MONTH(GAA_834_File_Date) AS FileMonth,
         Insurance_Type,
-        CASE
-            WHEN UPPER(ISNULL(enrolleeStatus,'')) IN ('CONFIRM','CONFIRMED','CONFIRMATION','REINSTATE','REINSTATED','ACTIVE','ENROLLED','EFFECTUATED','EC')
-              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%CONFIRM%'
-              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%REINSTATE%'
-                THEN 'CONFIRM'
-            WHEN UPPER(ISNULL(enrolleeStatus,'')) IN ('CANCEL','CANCELLED','CANCELED','CANCELLATION')
-              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%CANCEL%'
-                THEN 'CANCEL'
-            WHEN UPPER(ISNULL(enrolleeStatus,'')) IN ('TERM','TERMINATED','TERMINATION')
-              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%TERM%'
-                THEN 'TERM'
-            ELSE 'UNKNOWN'
-        END AS BusinessStatus,
+        enrolleeStatus,
         exchgAssignedPolicyID,
-        exchgIndivIdentifier
+        exchgIndivIdentifier,
+        memberMaintEffectiveDate,
+        GAA_834_File_Date,
+
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY
+                GAA_HIOS_ID,
+                Coverage_Year,
+                YEAR(GAA_834_File_Date),
+                MONTH(GAA_834_File_Date),
+                Insurance_Type,
+                exchgAssignedPolicyID,
+                exchgIndivIdentifier,
+                enrolleeStatus
+            ORDER BY
+                memberMaintEffectiveDate DESC,
+                GAA_834_File_Date DESC
+        ) AS rn
+
     FROM dbo.[834_Inbound_test]
+
     WHERE Coverage_Year = 2025
       AND GAA_HIOS_ID IN (13535,15105,43802)
 )
+
 SELECT
-    sm.GAA_HIOS_ID,
-    sm.FileYear,
-    sm.FileMonth,
-    sm.Insurance_Type,
-    sm.BusinessStatus,
-    COUNT(*) AS RowCount,
-    COUNT(DISTINCT sm.exchgAssignedPolicyID) AS Enrollment_Count,
-    COUNT(DISTINCT sm.exchgIndivIdentifier) AS Enrollee_Count
-FROM status_mapped sm
+
+    GAA_HIOS_ID,
+    Coverage_Year,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    enrolleeStatus,
+
+    COUNT(*) AS RawRows,
+
+    SUM(CASE
+            WHEN rn = 1 THEN 1
+            ELSE 0
+        END) AS AfterLatestRecord,
+
+    COUNT(DISTINCT exchgAssignedPolicyID) AS DistinctPolicies,
+
+    COUNT(DISTINCT exchgIndivIdentifier) AS DistinctMembers
+
+FROM normalized
+
 GROUP BY
-    sm.GAA_HIOS_ID,
-    sm.FileYear,
-    sm.FileMonth,
-    sm.Insurance_Type,
-    sm.BusinessStatus
+
+    GAA_HIOS_ID,
+    Coverage_Year,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    enrolleeStatus
+
 ORDER BY
-    sm.GAA_HIOS_ID,
-    sm.FileYear,
-    sm.FileMonth,
-    sm.Insurance_Type,
-    sm.BusinessStatus;
+
+    GAA_HIOS_ID,
+    Coverage_Year,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    enrolleeStatus;
