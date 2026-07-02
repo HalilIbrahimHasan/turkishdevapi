@@ -391,5 +391,31 @@ ORDER BY
     FileYear,
     FileMonth;
 
+===============
 
+
+SELECT
+    COUNT(*) AS RawRows,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS Policies,
+    COUNT(DISTINCT exchgIndivIdentifier) AS Members
+FROM dbo.[834_Inbound_test]
+WHERE
+GAA_HIOS_ID=13535
+AND YEAR(GAA_834_File_Date)=2026
+AND MONTH(GAA_834_File_Date)=5;
+
+
+SELECT
+    GAA_HIOS_ID,
+    COUNT(*) AS RawRows,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS Policies,
+    COUNT(DISTINCT exchgIndivIdentifier) AS Members
+FROM dbo.[834_Inbound_test]
+WHERE
+YEAR(GAA_834_File_Date)=2026
+AND MONTH(GAA_834_File_Date)=5
+GROUP BY
+GAA_HIOS_ID
+ORDER BY
+GAA_HIOS_ID;
 
