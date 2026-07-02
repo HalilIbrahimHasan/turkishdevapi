@@ -550,11 +550,10 @@ SELECT
     =========
 
 
-    WITH normalized AS
+ ;WITH normalized AS
 (
     SELECT
         GAA_HIOS_ID,
-
         ROW_NUMBER() OVER
         (
             PARTITION BY
@@ -567,20 +566,15 @@ SELECT
             ORDER BY
                 GAA_834_File_Date DESC
         ) AS rn
-
     FROM dbo.[834_Inbound_test]
-
     WHERE Coverage_Year = 2025
       AND GAA_HIOS_ID IN (13535,15105,43802)
 )
-
 SELECT
     GAA_HIOS_ID,
     COUNT(*) AS RawRows,
-    SUM(CASE WHEN rn=1 THEN 1 ELSE 0 END) AS AfterDedupe,
-    COUNT(*)-SUM(CASE WHEN rn=1 THEN 1 ELSE 0 END) AS RemovedDuplicates
+    SUM(CASE WHEN rn = 1 THEN 1 ELSE 0 END) AS AfterDedupe,
+    COUNT(*) - SUM(CASE WHEN rn = 1 THEN 1 ELSE 0 END) AS RemovedDuplicates
 FROM normalized
 GROUP BY GAA_HIOS_ID
 ORDER BY GAA_HIOS_ID;
-
-FROM normalized;
