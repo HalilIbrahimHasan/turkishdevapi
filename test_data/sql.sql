@@ -1,4 +1,31 @@
 
+
+SELECT
+    GAA_HIOS_ID,
+    YEAR(GAA_834_File_Date) AS FileYear,
+    MONTH(GAA_834_File_Date) AS FileMonth,
+    Insurance_Type,
+    enrolleeStatus,
+    COUNT(*) AS DB_RawRows,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS DB_Policies,
+    COUNT(DISTINCT exchgIndivIdentifier) AS DB_Members,
+    COUNT(DISTINCT GAA_834_File_Name) AS DB_FileCount
+FROM dbo.[834_Inbound_test]
+WHERE GAA_HIOS_ID IN (13535,15105,43802)
+GROUP BY
+    GAA_HIOS_ID,
+    YEAR(GAA_834_File_Date),
+    MONTH(GAA_834_File_Date),
+    Insurance_Type,
+    enrolleeStatus
+ORDER BY
+    GAA_HIOS_ID,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    enrolleeStatus;
+
+===========================
 SELECT
     [GAA_834_File_Name],
     COUNT(*) AS Row_Count,
