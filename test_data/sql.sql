@@ -505,3 +505,45 @@ SELECT
     'Enrollments_TEST',
     COUNT(*)
 FROM dbo.Enrollments_TEST;
+
+
+==============
+
+
+WITH normalized AS
+(
+    SELECT
+        GAA_HIOS_ID,
+        Coverage_Year,
+        GAA_834_File_Date,
+        Insurance_Type,
+        enrolleeStatus,
+        exchgAssignedPolicyID,
+        exchgIndivIdentifier,
+        memberMaintEffectiveDate,
+
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY
+                GAA_HIOS_ID,
+                exchgAssignedPolicyID,
+                exchgIndivIdentifier,
+                Insurance_Type,
+                enrolleeStatus,
+                memberMaintEffectiveDate
+            ORDER BY
+                GAA_834_File_Date DESC
+        ) rn
+
+    FROM dbo.834_Inbound_test
+
+    WHERE Coverage_Year=2025
+      AND GAA_HIOS_ID IN (13535,15105,43802)
+)
+
+SELECT
+    COUNT(*) RawRows,
+
+    SUM(CASE WHEN rn=1 THEN 1 END) AfterDedupe
+
+FROM normalized;
