@@ -1,3 +1,43 @@
+SELECT
+    exchgAssignedPolicyID,
+    exchgIndivIdentifier,
+    Insurance_Type,
+    enrolleeStatus,
+    COUNT(*) AS RowCount,
+    MIN(memberMaintEffectiveDate) AS FirstMaintDate,
+    MAX(memberMaintEffectiveDate) AS LastMaintDate,
+    MIN(GAA_834_File_Date) AS FirstFileDate,
+    MAX(GAA_834_File_Date) AS LastFileDate,
+    COUNT(DISTINCT GAA_834_File_Name) AS FileCount
+FROM dbo.[834_Inbound_test]
+WHERE Coverage_Year = 2025
+  AND GAA_HIOS_ID = 15105
+  AND YEAR(GAA_834_File_Date) = 2025
+  AND MONTH(GAA_834_File_Date) = 10
+  AND enrolleeStatus = 'CONFIRM'
+GROUP BY
+    exchgAssignedPolicyID,
+    exchgIndivIdentifier,
+    Insurance_Type,
+    enrolleeStatus
+ORDER BY
+    RowCount DESC;
+
+
+SELECT
+    enrolleeStatus,
+    COUNT(*) AS RowCount,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS EnrollmentCount,
+    COUNT(DISTINCT exchgIndivIdentifier) AS EnrolleeCount
+FROM dbo.[834_Inbound_test]
+WHERE Coverage_Year = 2025
+  AND GAA_HIOS_ID = 15105
+  AND YEAR(GAA_834_File_Date) = 2025
+  AND MONTH(GAA_834_File_Date) = 10
+GROUP BY enrolleeStatus
+ORDER BY RowCount DESC;
+
+===========================
 
 SELECT TOP 200
     exchgAssignedPolicyID,
