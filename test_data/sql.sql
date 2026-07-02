@@ -1,3 +1,54 @@
+
+
+SELECT
+    [exchgAssignedPolicyID],
+    [exchgIndivIdentifier],
+    [Insurance_Type],
+    [enrolleeStatus],
+    COUNT(*) AS Row_Count,
+    MIN([memberMaintEffectiveDate]) AS First_Maint_Date,
+    MAX([memberMaintEffectiveDate]) AS Last_Maint_Date,
+    MIN([GAA_834_File_Date]) AS First_File_Date,
+    MAX([GAA_834_File_Date]) AS Last_File_Date,
+    COUNT(DISTINCT [GAA_834_File_Name]) AS File_Count
+FROM dbo.[834_Inbound_test]
+WHERE [Coverage_Year] = 2025
+  AND [GAA_HIOS_ID] = 15105
+  AND YEAR([GAA_834_File_Date]) = 2025
+  AND MONTH([GAA_834_File_Date]) = 10
+  AND [enrolleeStatus] = 'CONFIRM'
+GROUP BY
+    [exchgAssignedPolicyID],
+    [exchgIndivIdentifier],
+    [Insurance_Type],
+    [enrolleeStatus]
+ORDER BY
+    Row_Count DESC;
+
+
+
+SELECT
+    YEAR([memberMaintEffectiveDate]) AS MaintYear,
+    MONTH([memberMaintEffectiveDate]) AS MaintMonth,
+    COUNT(*) AS Row_Count,
+    COUNT(DISTINCT [exchgAssignedPolicyID]) AS Policy_Count,
+    COUNT(DISTINCT [exchgIndivIdentifier]) AS Member_Count
+FROM dbo.[834_Inbound_test]
+WHERE [Coverage_Year] = 2025
+  AND [GAA_HIOS_ID] = 15105
+  AND YEAR([GAA_834_File_Date]) = 2025
+  AND MONTH([GAA_834_File_Date]) = 10
+  AND [enrolleeStatus] = 'CONFIRM'
+GROUP BY
+    YEAR([memberMaintEffectiveDate]),
+    MONTH([memberMaintEffectiveDate])
+ORDER BY
+    MaintYear,
+    MaintMonth;
+
+
+=====================
+
 SELECT
     [enrolleeStatus],
     COUNT(*) AS Row_Count,
