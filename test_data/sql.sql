@@ -431,3 +431,77 @@ SELECT DISTINCT
 FROM dbo.[834_Inbound_test]
 ORDER BY GAA_HIOS_ID;
 
+
+==================
+
+
+SELECT
+    GAA_HIOS_ID,
+    YEAR(GAA_834_File_Date) AS FileYear,
+    MONTH(GAA_834_File_Date) AS FileMonth,
+    COUNT(*) AS DB_RawRows,
+    COUNT(DISTINCT GAA_834_File_Name) AS DB_FileCount,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS DB_Policies,
+    COUNT(DISTINCT exchgIndivIdentifier) AS DB_Members
+FROM dbo.[834_Inbound_test]
+GROUP BY
+    GAA_HIOS_ID,
+    YEAR(GAA_834_File_Date),
+    MONTH(GAA_834_File_Date)
+ORDER BY
+    GAA_HIOS_ID,
+    FileYear,
+    FileMonth;
+
+
+
+SELECT
+    GAA_HIOS_ID,
+    YEAR(GAA_834_File_Date) AS FileYear,
+    MONTH(GAA_834_File_Date) AS FileMonth,
+    Insurance_Type,
+    enrolleeStatus,
+    COUNT(*) AS DB_RawRows,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS DB_Policies,
+    COUNT(DISTINCT exchgIndivIdentifier) AS DB_Members
+FROM dbo.[834_Inbound_test]
+GROUP BY
+    GAA_HIOS_ID,
+    YEAR(GAA_834_File_Date),
+    MONTH(GAA_834_File_Date),
+    Insurance_Type,
+    enrolleeStatus
+ORDER BY
+    GAA_HIOS_ID,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    enrolleeStatus;
+
+
+
+SELECT
+    'test_834_in' AS table_name,
+    COUNT(*) AS rows_count
+FROM dbo.[test_834_in]
+
+UNION ALL
+
+SELECT
+    '834_Inbound_test',
+    COUNT(*)
+FROM dbo.[834_Inbound_test]
+
+UNION ALL
+
+SELECT
+    'monthly_discrepancy_PY2025',
+    COUNT(*)
+FROM dbo.monthly_discrepancy_PY2025
+
+UNION ALL
+
+SELECT
+    'Enrollments_TEST',
+    COUNT(*)
+FROM dbo.Enrollments_TEST;
