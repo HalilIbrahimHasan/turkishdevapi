@@ -1,6 +1,35 @@
 
 
 SELECT
+    GAA_834_File_Name,
+    COUNT(*) AS Rows,
+    MIN(GAA_834_File_Date) AS Min_File_Date,
+    MAX(GAA_834_File_Date) AS Max_File_Date,
+    MIN(Coverage_Year) AS Min_Coverage_Year,
+    MAX(Coverage_Year) AS Max_Coverage_Year
+FROM dbo.[834_Inbound_test]
+WHERE GAA_834_File_Name IN
+(
+'from_15105_GA_834_INDV_20250109152427.xml',
+'from_15105_GA_834_INDV_20250401045709.xml',
+'from_43802_GA_834_INDV_20250813082244.xml',
+'from_43802_GA_834_INDV_20250130013454.xml',
+'from_15105_GA_834_INDV_20250211042401.xml',
+'from_43802_GA_834_INDV_20250112013511.xml',
+'from_43802_GA_834_INDV_20250201013552.xml',
+'from_13535_GA_834_INDV_20250813082115.xml',
+'from_43802_GA_834_INDV_20250102013455.xml',
+'from_15105_GA_834_INDV_20250501042438.xml'
+)
+GROUP BY
+    GAA_834_File_Name
+ORDER BY
+    GAA_834_File_Name;
+
+
+=========================
+
+SELECT
     [GAA_HIOS_ID] AS Issuer,
     YEAR([GAA_834_File_Date]) AS File_Year,
     MONTH([GAA_834_File_Date]) AS File_Month,
