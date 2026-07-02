@@ -287,6 +287,41 @@ OR COLUMN_NAME LIKE '%834%'
 ORDER BY
 TABLE_NAME;
 
+===============
+
+
+1. Kolonlarını görelim
+SELECT COLUMN_NAME, DATA_TYPE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'monthly_discrepancy_PY2025'
+ORDER BY ORDINAL_POSITION;
+2. İlk 20 satır
+SELECT TOP 20 *
+FROM dbo.monthly_discrepancy_PY2025;
+3. Issuer ve ay dağılımı var mı bakalım
+
+Önce tarih kolonlarını görmemiz lazım ama deneme için:
+
+SELECT TOP 5 *
+FROM dbo.monthly_discrepancy_PY2025
+WHERE GAA_HIOS_ID = 13535;
+4. Eğer tarih/load/month kolonu varsa hemen count alacağız
+
+Kolonları görünce şuna benzer query yazacağız:
+
+SELECT
+    GAA_HIOS_ID,
+    MONTH(<date_column>) AS month_num,
+    COUNT(*) AS row_count,
+    COUNT(DISTINCT Exchange_Assigned_Policy_ID) AS distinct_policy_count
+FROM dbo.monthly_discrepancy_PY2025
+GROUP BY
+    GAA_HIOS_ID,
+    MONTH(<date_column>)
+ORDER BY
+    GAA_HIOS_ID,
+    month_num;
+
 
 
 
