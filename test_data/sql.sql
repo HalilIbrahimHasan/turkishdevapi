@@ -745,3 +745,87 @@ ORDER BY
     FileMonth,
     Insurance_Type,
     enrolleeStatus;
+
+
+==========================
+
+
+;WITH normalized AS
+(
+    SELECT
+        GAA_HIOS_ID,
+        Coverage_Year,
+        YEAR(GAA_834_File_Date) AS FileYear,
+        MONTH(GAA_834_File_Date) AS FileMonth,
+        Insurance_Type,
+        exchgAssignedPolicyID,
+        exchgIndivIdentifier,
+        memberMaintEffectiveDate,
+        GAA_834_File_Date,
+        GAA_834_File_Name,
+
+        CASE
+            WHEN UPPER(ISNULL(enrolleeStatus,'')) LIKE '%CONFIRM%'
+              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%REINSTATE%'
+              OR UPPER(ISNULL(enrolleeStatus,'')) IN ('ENROLLED','ACTIVE','EFFECTUATED','EC')
+                THEN 'CONFIRM'
+            WHEN UPPER(ISNULL(enrolleeStatus,'')) LIKE '%CANCEL%'
+                THEN 'CANCEL'
+            WHEN UPPER(ISNULL(enrolleeStatus,'')) LIKE '%TERM%'
+                THEN 'TERM'
+            ELSE 'UNKNOWN'
+        END AS BusinessStatus
+
+    FROM dbo.[834_Inbound_test]
+    WHERE Coverage_Year = 2025
+      AND GAA_HIOS_ID IN (13535,15105,43802)
+),
+collapsed AS
+(
+    SELECT
+        *,
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY
+                GAA_HIOS_ID,
+                Coverage_Year,
+                FileYear,
+                FileMonth,
+                Insurance_Type,
+                exchgAssignedPolicyID,
+                exchgIndivIdentifier
+            ORDER BY
+                memberMaintEffectiveDate DESC,
+                GAA_834_File_Date DESC,
+                GAA_834_File_Name DESC
+        ) AS rn
+    FROM normalized
+)
+SELECT
+    GAA_HIOS_ID,
+    Coverage_Year,
+    FileYear,
+    FileMonth,
+    DATEFROMPARTS(FileYear, FileMonth, 1) AS GAA_Load_Date,
+    Insurance_Type,
+    BusinessStatus AS enrolleeStatus,
+
+    COUNT(*) AS BusinessReady_Row_Count,
+    COUNT(DISTINCT exchgAssignedPolicyID) AS Enrollment_Count,
+    COUNT(DISTINCT exchgIndivIdentifier) AS Enrollee_Count
+
+FROM collapsed
+WHERE rn = 1
+GROUP BY
+    GAA_HIOS_ID,
+    Coverage_Year,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    BusinessStatus
+ORDER BY
+    GAA_HIOS_ID,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    BusinessStatus;
