@@ -659,3 +659,89 @@ ORDER BY
     FileMonth,
     Insurance_Type,
     enrolleeStatus;
+
+===================
+
+
+;WITH status_mapped AS
+(
+    SELECT
+        GAA_HIOS_ID,
+        Coverage_Year,
+        YEAR(GAA_834_File_Date) AS FileYear,
+        MONTH(GAA_834_File_Date) AS FileMonth,
+        DATEFROMPARTS(YEAR(GAA_834_File_Date), MONTH(GAA_834_File_Date), 1) AS GAA_Load_Date,
+        Insurance_Type,
+        CASE
+            WHEN UPPER(ISNULL(enrolleeStatus,'')) LIKE '%CONFIRM%'
+              OR UPPER(ISNULL(enrolleeStatus,'')) LIKE '%REINSTATE%'
+              OR UPPER(ISNULL(enrolleeStatus,'')) IN ('ENROLLED','ACTIVE','EFFECTUATED','EC')
+                THEN 'CONFIRM'
+            WHEN UPPER(ISNULL(enrolleeStatus,'')) LIKE '%CANCEL%'
+                THEN 'CANCEL'
+            WHEN UPPER(ISNULL(enrolleeStatus,'')) LIKE '%TERM%'
+                THEN 'TERM'
+            ELSE 'UNKNOWN'
+        END AS enrolleeStatus,
+        exchgAssignedPolicyID,
+        exchgIndivIdentifier,
+        memberMaintEffectiveDate,
+        GAA_834_File_Date
+    FROM dbo.[834_Inbound_test]
+    WHERE Coverage_Year = 2025
+      AND GAA_HIOS_ID IN (13535,15105,43802)
+),
+ranked AS
+(
+    SELECT
+        *,
+        ROW_NUMBER() OVER
+        (
+            PARTITION BY
+                GAA_HIOS_ID,
+                Coverage_Year,
+                FileYear,
+                FileMonth,
+                Insurance_Type,
+                enrolleeStatus,
+                exchgAssignedPolicyID,
+                exchgIndivIdentifier
+            ORDER BY
+                memberMaintEffectiveDate DESC,
+                GAA_834_File_Date DESC
+        ) AS rn
+    FROM status_mapped
+)
+SELECT
+    GAA_HIOS_ID,
+    Coverage_Year,
+    FileYear,
+    FileMonth,
+    GAA_Load_Date,
+    Insurance_Type,
+    enrolleeStatus,
+
+    COUNT(*) AS SQL_RawRows,
+    SUM(CASE WHEN rn = 1 THEN 1 ELSE 0 END) AS SQL_AfterLatestRows,
+
+    COUNT(DISTINCT exchgAssignedPolicyID) AS SQL_Raw_Enrollment_Count,
+    COUNT(DISTINCT exchgIndivIdentifier) AS SQL_Raw_Enrollee_Count,
+
+    COUNT(DISTINCT CASE WHEN rn = 1 THEN exchgAssignedPolicyID END) AS SQL_Latest_Enrollment_Count,
+    COUNT(DISTINCT CASE WHEN rn = 1 THEN exchgIndivIdentifier END) AS SQL_Latest_Enrollee_Count
+
+FROM ranked
+GROUP BY
+    GAA_HIOS_ID,
+    Coverage_Year,
+    FileYear,
+    FileMonth,
+    GAA_Load_Date,
+    Insurance_Type,
+    enrolleeStatus
+ORDER BY
+    GAA_HIOS_ID,
+    FileYear,
+    FileMonth,
+    Insurance_Type,
+    enrolleeStatus;
