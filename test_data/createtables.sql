@@ -256,3 +256,20 @@ WHERE s.name = N'dbo'
         N'inbound_automation_file_log'
   )
 ORDER BY t.name;
+
+
+SELECT TOP (5)
+    load_run_id,
+    run_mode,
+    status,
+    started_at,
+    completed_at,
+    files_discovered,
+    files_loaded,
+    files_skipped_duplicate,
+    files_failed,
+    rows_parsed,
+    rows_inserted,
+    total_warning_count
+FROM dbo.inbound_automation_run_log
+ORDER BY started_at DESC;
