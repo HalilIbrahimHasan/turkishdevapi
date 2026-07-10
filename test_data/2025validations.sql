@@ -1,4 +1,7 @@
 
+python run_xml_structural_audit.py --source-root "C:\Users\SelmaKazanci\Downloads\project\gaaccess-develop8\834_issuer_etl\source_data"
+
+
 SELECT
     COUNT(*) AS Total_2026_Rows,
     COUNT(DISTINCT file_hash) AS Total_2026_Files
