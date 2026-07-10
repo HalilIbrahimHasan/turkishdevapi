@@ -1,3 +1,63 @@
+SELECT
+    Coverage_Year,
+    hios_issuer_id,
+    COUNT(*) AS Total_Rows
+FROM dbo.Enrollments_TEST
+GROUP BY
+    Coverage_Year,
+    hios_issuer_id
+ORDER BY
+    Coverage_Year,
+    hios_issuer_id;
+
+
+SELECT
+    Coverage_Year,
+    hios_issuer_id,
+    COUNT(DISTINCT enrollment_id) AS Total_Enrollments
+FROM dbo.Enrollments_TEST
+GROUP BY
+    Coverage_Year,
+    hios_issuer_id
+ORDER BY
+    Coverage_Year,
+    hios_issuer_id;
+
+
+SELECT
+    Coverage_Year,
+    hios_issuer_id,
+    COUNT(DISTINCT enrollee_id) AS Total_Enrollees
+FROM dbo.Enrollments_TEST
+GROUP BY
+    Coverage_Year,
+    hios_issuer_id
+ORDER BY
+    Coverage_Year,
+    hios_issuer_id;
+
+
+
+SELECT
+    issuer,
+    folder_year,
+    COUNT(*) AS raw_rows,
+    COUNT(DISTINCT file_hash) AS total_files,
+    COUNT(DISTINCT member_id) AS distinct_members,
+    COUNT(DISTINCT policy_id) AS distinct_policies
+FROM dbo.inbound_automation
+GROUP BY
+    issuer,
+    folder_year
+ORDER BY
+    issuer,
+    folder_year;
+
+
+
+
+
+===============
 1. Total records and unique files by folder year
 
 Description: Shows the total raw rows and unique loaded files for each physical folder year.
