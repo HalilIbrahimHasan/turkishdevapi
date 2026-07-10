@@ -1,4 +1,30 @@
+SELECT
+issuer,
+COUNT(*) AS NullPolicy
+FROM dbo.inbound_automation
+WHERE policy_id IS NULL
+GROUP BY issuer
+ORDER BY NullPolicy DESC;
 
+
+SELECT
+issuer,
+COUNT(*) AS NullMember
+FROM dbo.inbound_automation
+WHERE member_id IS NULL
+GROUP BY issuer
+ORDER BY NullMember DESC;
+
+
+SELECT
+file_hash,
+COUNT(*)
+FROM dbo.inbound_automation_file_log
+GROUP BY file_hash
+HAVING COUNT(*)>1;
+
+
+===============
 
 SELECT TOP 20
 source_file,
