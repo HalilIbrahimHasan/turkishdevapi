@@ -1,4 +1,92 @@
 
+SELECT
+    COUNT(*) AS Total_2026_Rows,
+    COUNT(DISTINCT file_hash) AS Total_2026_Files
+FROM dbo.inbound_automation
+WHERE folder_year = 2026;
+
+SELECT
+    source_file,
+    COUNT(*) AS Rows_Loaded
+FROM dbo.inbound_automation
+WHERE source_file IN (
+    'from_68806_GA_834_INDV_2026-02-08T05344500.P.xml',
+    'from_70893_GA_834_INDV_20260305204226.xml'
+)
+GROUP BY source_file
+ORDER BY source_file;
+
+
+SELECT
+    source_file,
+    parse_status,
+    row_count,
+    error_message,
+    load_run_id
+FROM dbo.inbound_automation_file_log
+WHERE source_file IN (
+    'from_68806_GA_834_INDV_2026-02-08T05344500.P.xml',
+    'from_70893_GA_834_INDV_20260305204226.xml'
+)
+ORDER BY source_file;
+
+
+SELECT
+    COUNT(*) AS Failed_File_Count
+FROM dbo.inbound_automation_file_log
+WHERE parse_status = 'failed';
+
+
+SELECT
+    file_hash,
+    COUNT(*) AS Hash_Count
+FROM dbo.inbound_automation_file_log
+GROUP BY file_hash
+HAVING COUNT(*) > 1;
+
+
+SELECT
+    file_hash,
+    COUNT(*) AS Hash_Count
+FROM dbo.inbound_automation_file_log
+GROUP BY file_hash
+HAVING COUNT(*) > 1;
+
+
+SELECT TOP (10)
+    load_run_id,
+    status,
+    files_discovered,
+    files_loaded,
+    files_skipped_duplicate,
+    files_failed,
+    rows_parsed,
+    rows_inserted,
+    started_at,
+    completed_at
+FROM dbo.inbound_automation_run_log
+WHERE year_filter = '2026'
+ORDER BY started_at DESC;
+
+
+SELECT
+    folder_year,
+    COUNT(*) AS Total_Rows,
+    COUNT(DISTINCT file_hash) AS Total_Files
+FROM dbo.inbound_automation
+WHERE folder_year IN (2025, 2026)
+GROUP BY folder_year
+ORDER BY folder_year;
+
+SELECT
+    COUNT(*) AS Total_All_Rows,
+    COUNT(DISTINCT file_hash) AS Total_All_Files
+FROM dbo.inbound_automation;
+
+
+
+
+=============================     ===========
 SELECT TOP 20
 policy_id,
 health_coverage_policy_no
