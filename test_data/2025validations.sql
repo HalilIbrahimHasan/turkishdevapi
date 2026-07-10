@@ -1,3 +1,42 @@
+
+
+SELECT TOP 20
+source_file,
+COUNT(*) AS Rows
+FROM dbo.inbound_automation
+GROUP BY source_file
+ORDER BY Rows DESC;
+
+SELECT
+issuer,
+COUNT(*) Rows
+FROM dbo.inbound_automation
+GROUP BY issuer
+ORDER BY Rows DESC;
+
+
+SELECT
+folder_year,
+folder_month,
+COUNT(*) Rows
+FROM dbo.inbound_automation
+GROUP BY
+folder_year,
+folder_month
+ORDER BY
+folder_year,
+folder_month;
+
+
+
+SELECT
+enrolleeStatus,
+COUNT(*) Rows
+FROM dbo.inbound_automation
+GROUP BY enrolleeStatus;
+
+
+=====================
 Sadece 2026 toplam row ve file count
 SELECT
     COUNT(*) AS Total_2026_Rows,
