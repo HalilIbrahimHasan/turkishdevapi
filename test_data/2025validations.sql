@@ -1,3 +1,14 @@
+
+SELECT
+    COUNT(*) AS Total2026Rows,
+    SUM(CASE WHEN filename_file_year = 2025 THEN 1 ELSE 0 END) AS RowsFrom2025Files,
+    SUM(CASE WHEN filename_file_year = 2026 THEN 1 ELSE 0 END) AS RowsFrom2026Files,
+    SUM(CASE WHEN filename_file_year IS NULL THEN 1 ELSE 0 END) AS UnknownYear
+FROM dbo.inbound_automation
+WHERE folder_year = 2026;
+
+====================
+
 SELECT
     folder_year,
     filename_file_year,
