@@ -1,3 +1,47 @@
+SELECT
+    folder_year,
+    filename_file_year,
+    COUNT(DISTINCT file_hash) AS file_count,
+    COUNT(*) AS row_count
+FROM dbo.inbound_automation
+WHERE folder_year <> filename_file_year
+GROUP BY
+    folder_year,
+    filename_file_year
+ORDER BY
+    folder_year,
+    filename_file_year;
+
+
+SELECT
+    COUNT(DISTINCT file_hash) AS Files,
+    COUNT(*) AS Rows
+FROM dbo.inbound_automation
+WHERE folder_year = 2026
+  AND filename_file_year = 2025;
+
+
+SELECT TOP (100)
+    issuer,
+    folder_year,
+    folder_month,
+    filename_file_year,
+    filename_file_month,
+    source_file,
+    COUNT(*) AS Rows
+FROM dbo.inbound_automation
+WHERE folder_year = 2026
+  AND filename_file_year = 2025
+GROUP BY
+    issuer,
+    folder_year,
+    folder_month,
+    filename_file_year,
+    filename_file_month,
+    source_file
+ORDER BY Rows DESC;
+
+=============================
 
 python run_xml_structural_audit.py --source-root "C:\Users\SelmaKazanci\Downloads\project\gaaccess-develop8\834_issuer_etl\source_data"
 
