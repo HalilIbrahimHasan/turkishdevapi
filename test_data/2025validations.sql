@@ -1,4 +1,9 @@
 
+SELECT TOP 20
+policy_id,
+health_coverage_policy_no
+FROM dbo.inbound_automation
+WHERE issuer='45334';
 
 SELECT TOP 100
 source_file,
