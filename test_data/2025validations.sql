@@ -1,3 +1,14 @@
+
+
+SELECT TOP 100
+source_file,
+member_id,
+policy_id,
+raw_json
+FROM dbo.inbound_automation
+WHERE issuer='60224'
+AND policy_id IS NULL;
+
 SELECT
 issuer,
 COUNT(*) AS NullPolicy
