@@ -1,3 +1,34 @@
+
+
+SELECT COUNT(*) AS TotalRows
+FROM dbo.inbound_automation;
+
+
+SELECT
+    SUM(row_count) AS LoggedRows
+FROM dbo.inbound_automation_file_log
+WHERE parse_status = 'loaded';
+
+
+
+SELECT
+    source_file,
+    COUNT(*) AS RowsLoaded
+FROM dbo.inbound_automation
+WHERE issuer = '64357'
+GROUP BY source_file
+ORDER BY source_file;
+
+
+
+
+
+
+
+
+
+
+
 Ben olsam şu sırayla giderdim
 Phase 1 — Duplicate Files ⭐⭐⭐⭐⭐ (ilk)
 
