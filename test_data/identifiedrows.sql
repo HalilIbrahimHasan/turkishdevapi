@@ -90,4 +90,40 @@ FROM base b
 GROUP BY b.issuer
 ORDER BY b.issuer;
 
+DECLARE @folder_year INT = 2026;   -- change as needed, or NULL for all years
 
+WITH base AS (
+    SELECT member_id, subscriber_id
+    FROM dbo.inbound_automation
+    WHERE (@folder_year IS NULL OR folder_year = @folder_year)
+),
+members AS (
+    SELECT DISTINCT member_id
+    FROM base
+    WHERE member_id IS NOT NULL
+),
+subscriber_only AS (
+    SELECT DISTINCT subscriber_id
+    FROM base
+    WHERE subscriber_id IS NOT NULL
+      AND subscriber_id NOT IN (SELECT member_id FROM members)
+)
+SELECT
+    (SELECT COUNT(*) FROM dbo.inbound_automation
+     WHERE (@folder_year IS NULL OR folder_year = @folder_year))
+        AS total_enrollee_rows,
+
+    (SELECT COUNT(*) FROM subscriber_only)
+        AS subscriber_only_policy_holders,
+
+    (SELECT COUNT(*) FROM dbo.inbound_automation
+     WHERE (@folder_year IS NULL OR folder_year = @folder_year))
+        + (SELECT COUNT(*) FROM subscriber_only)
+        AS enrollee_rows_plus_subscriber_only_holders,
+
+    (SELECT COUNT(DISTINCT member_id) FROM base WHERE member_id IS NOT NULL)
+        AS distinct_member_id,
+
+    (SELECT COUNT(*) FROM subscriber_only)
+        + (SELECT COUNT(DISTINCT member_id) FROM base WHERE member_id IS NOT NULL)
+        AS unique_people_estimate;
