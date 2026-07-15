@@ -1,4 +1,12 @@
 
+
+SELECT
+    COUNT(*) AS all_raw_rows,
+    SUM(CASE WHEN folder_year = 2025 THEN 1 ELSE 0 END) AS folder_2025_rows,
+    SUM(CASE WHEN folder_year = 2026 THEN 1 ELSE 0 END) AS folder_2026_rows,
+    SUM(CASE WHEN folder_year IN (2025, 2026) THEN 1 ELSE 0 END)
+        AS folder_2025_2026_rows
+FROM dbo.inbound_automation;
 /* ================================================================
    Sisense-style Effectuated Enrollments by Issuer
    Source: dbo.inbound_automation
