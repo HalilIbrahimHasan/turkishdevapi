@@ -1,4 +1,133 @@
+/* Sisense-style Effectuated Enrollments by Issuer
+   Source: dbo.inbound_automation
+   Read-only query */
 
+SET NOCOUNT ON;
+
+WITH normalized AS (
+    SELECT
+        ia.issuer,
+        ia.folder_year AS coverage_year,
+
+        CASE
+            WHEN UPPER(LTRIM(RTRIM(ISNULL(ia.insurance_type, ''))))
+                 IN ('HEALTH', 'MEDICAL') THEN 'Health'
+            WHEN UPPER(LTRIM(RTRIM(ISNULL(ia.insurance_type, ''))))
+                 = 'DENTAL' THEN 'Dental'
+            WHEN UPPER(LTRIM(RTRIM(ISNULL(ia.insurance_type, ''))))
+                 = 'VISION' THEN 'Vision'
+            WHEN UPPER(LTRIM(RTRIM(ISNULL(ia.insurance_type_code, ''))))
+                 IN ('HLT', 'HEALTH', 'MEDICAL') THEN 'Health'
+            WHEN UPPER(LTRIM(RTRIM(ISNULL(ia.insurance_type_code, ''))))
+                 IN ('DEN', 'DENTAL') THEN 'Dental'
+            WHEN UPPER(LTRIM(RTRIM(ISNULL(ia.insurance_type_code, ''))))
+                 IN ('VIS', 'VISION') THEN 'Vision'
+            ELSE COALESCE(
+                NULLIF(LTRIM(RTRIM(ia.insurance_type)), ''),
+                NULLIF(LTRIM(RTRIM(ia.insurance_type_code)), ''),
+                'Unknown'
+            )
+        END AS insurance_type,
+
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(ia.policy_id)), ''),
+            NULLIF(LTRIM(RTRIM(ia.health_coverage_policy_no)), '')
+        ) AS policy_key,
+
+        NULLIF(LTRIM(RTRIM(ia.member_id)), '') AS member_key,
+
+        CASE
+            WHEN UPPER(LTRIM(RTRIM(ISNULL(ia.enrolleeStatus, ''))))
+                 IN (
+                    'CONFIRM',
+                    'CONFIRMED',
+                    'EFFECTUATED',
+                    'ACTIVE',
+                    'ENROLLED',
+                    'REINSTATE',
+                    'REINSTATED'
+                 )
+            THEN 1
+            ELSE 0
+        END AS is_effectuated
+
+    FROM dbo.inbound_automation ia
+    WHERE ia.folder_year IN (2025, 2026)
+),
+counts AS (
+    SELECT
+        issuer,
+        insurance_type,
+        coverage_year,
+
+        COUNT(DISTINCT policy_key)
+            AS enrollments_total,
+
+        COUNT(DISTINCT member_key)
+            AS enrollees_total,
+
+        COUNT(DISTINCT CASE
+            WHEN is_effectuated = 1 THEN policy_key
+        END) AS enrollments_effectuated,
+
+        COUNT(DISTINCT CASE
+            WHEN is_effectuated = 1 THEN member_key
+        END) AS enrollees_effectuated
+
+    FROM normalized
+    GROUP BY
+        issuer,
+        insurance_type,
+        coverage_year
+)
+SELECT
+    CASE issuer
+        WHEN '82824' THEN 'Aetna Health Inc. (a GA corp.)'
+        WHEN '83761' THEN 'Alliant Health Plans, Inc.'
+        WHEN '70893' THEN 'Ambetter from Peach State Health Plan'
+        WHEN '45334' THEN 'Anthem Blue Cross and Blue Shield'
+        WHEN '83502' THEN 'BEST Life and Health Insurance Company'
+        WHEN '60224' THEN 'CareSource Georgia Co.'
+        WHEN '15105' THEN 'Cigna HealthCare of Georgia, Inc.'
+        WHEN '86637' THEN 'Delta Dental Insurance Company'
+        WHEN '68806' THEN
+            'DentaQuest National Insurance Company, Inc.'
+        WHEN '64357' THEN 'Dominion Dental Services, Inc.'
+        WHEN '37301' THEN
+            'Educators Health Plans Life, Accident and Health, Inc.'
+        WHEN '37001' THEN 'Humana Insurance Company'
+        WHEN '89942' THEN
+            'Kaiser Foundation Health Plan of Georgia, Inc.'
+        WHEN '58081' THEN 'Oscar Health Plan of Georgia'
+        WHEN '13535' THEN 'UnitedHealthcare Insurance Company'
+        WHEN '43802' THEN 'UnitedHealthcare of Georgia Inc.'
+        ELSE 'Issuer ' + issuer
+    END AS issuer_name,
+
+    issuer AS hios_issuer_id,
+    insurance_type,
+    coverage_year,
+
+    enrollments_total,
+    enrollees_total,
+    enrollments_effectuated,
+    enrollees_effectuated,
+
+    enrollments_total - enrollments_effectuated
+        AS enrollments_pending_effectuation,
+
+    enrollees_total - enrollees_effectuated
+        AS enrollees_pending_effectuation
+
+FROM counts
+ORDER BY
+    issuer_name,
+    hios_issuer_id,
+    insurance_type,
+    coverage_year;
+
+
+==================
 
 SELECT
     COUNT(*) AS all_raw_rows,
