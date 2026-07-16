@@ -2,47 +2,57 @@ SELECT
     issuer AS [HIOS Issuer ID],
     insurance_type AS [Insurance Type],
     coverage_year AS [Coverage Year],
+    folder_year AS [Source Folder Year],
 
     COALESCE(
-        NULLIF(policy_id, ''),
-        NULLIF(health_coverage_policy_no, '')
+        NULLIF(LTRIM(RTRIM(policy_id)), ''),
+        NULLIF(LTRIM(RTRIM(health_coverage_policy_no)), '')
     ) AS [Policy ID],
 
     COALESCE(
-        NULLIF(member_id, ''),
-        NULLIF(issuer_indiv_identifier, ''),
-        NULLIF(exchg_assigned_enrollee_id, '')
+        NULLIF(LTRIM(RTRIM(member_id)), ''),
+        NULLIF(LTRIM(RTRIM(issuer_indiv_identifier)), ''),
+        NULLIF(LTRIM(RTRIM(exchg_assigned_enrollee_id)), '')
     ) AS [Enrollee ID],
 
     policy_id AS [Original Policy ID],
     health_coverage_policy_no AS [Health Coverage Policy Number],
+
     member_id AS [Original Member ID],
     issuer_indiv_identifier AS [Issuer Individual Identifier],
     exchg_assigned_enrollee_id AS [Exchange Assigned Enrollee ID],
 
-    policy_benefit_start_date AS [Policy Benefit Start Date],
-    policy_benefit_end_date AS [Policy Benefit End Date],
-
-    enrollee_benefit_start_date AS [Enrollee Benefit Start Date],
-    enrollee_benefit_end_date AS [Enrollee Benefit End Date],
-
-    enrollment_status AS [Enrollment Status],
     enrollee_status AS [Enrollee Status],
-    enrollment_date AS [Enrollment Date],
-
     maintenance_type_code AS [Maintenance Type Code],
-    member_maint_effective_date AS [Maintenance Effective Date],
 
-    source_file_name AS [Source File],
-    folder_year AS [Folder Year],
-    loaded_at AS [Loaded Date]
+    member_maint_effective_date AS [Enrollment / Maintenance Effective Date],
+
+    source_file_name AS [Source File Name],
+    loaded_at AS [Azure Loaded Date]
 
 FROM dbo.inbound_automation
 WHERE issuer = '83502'
-  AND coverage_year = 2026
-  AND insurance_type = 'Health'
 ORDER BY
+    coverage_year,
     [Policy ID],
     [Enrollee ID],
     member_maint_effective_date,
     source_file_name;
+
+
+SELECT
+    ORDINAL_POSITION,
+    COLUMN_NAME,
+    DATA_TYPE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = 'dbo'
+  AND TABLE_NAME = 'inbound_automation'
+  AND (
+        COLUMN_NAME LIKE '%benefit%'
+     OR COLUMN_NAME LIKE '%effective%'
+     OR COLUMN_NAME LIKE '%start%'
+     OR COLUMN_NAME LIKE '%end%'
+     OR COLUMN_NAME LIKE '%status%'
+     OR COLUMN_NAME LIKE '%enrollment%'
+  )
+ORDER BY ORDINAL_POSITION;
