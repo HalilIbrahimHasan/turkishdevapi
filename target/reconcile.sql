@@ -6,30 +6,26 @@ SELECT
     folder_year,
     folder_month,
 
-    COALESCE(
-        NULLIF(policy_id,''),
-        NULLIF(health_coverage_policy_no,'')
-    ) AS inbound_policy,
+    policy_id,
+    health_coverage_policy_no,
 
-    COALESCE(
-        NULLIF(member_id,''),
-        NULLIF(issuer_indiv_identifier,''),
-        NULLIF(exchg_assigned_enrollee_id,'')
-    ) AS inbound_enrollee,
+    member_id,
 
     enrolleeStatus,
-    member_maint_effective_date,
-    loaded_at,
-    source_file
+
+    source_file,
+
+    member_maint_effective_date
 
 FROM dbo.inbound_automation
-WHERE
-    COALESCE(
-        NULLIF(member_id,''),
-        NULLIF(issuer_indiv_identifier,''),
-        NULLIF(exchg_assigned_enrollee_id,'')
-    ) = '1000162542'
+
+WHERE issuer = '37301'
+
+AND (
+        member_id = '1000162542'
+     OR issuer_indiv_identifier = '1000162542'
+     OR exchg_assigned_enrollee_id = '1000162542'
+)
 
 ORDER BY
-    member_maint_effective_date,
-    loaded_at;
+member_maint_effective_date;
