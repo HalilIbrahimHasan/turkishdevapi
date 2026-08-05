@@ -1,4 +1,37 @@
 
+SELECT
+    household_id,
+    coverage_year,
+    enrollment_id,
+    enrollee_id,
+    hios_issuer_id,
+    source,
+
+    enrollment_status_description,
+    enrollee_status_description,
+
+    benefit_effective_date,
+    benefit_end_date,
+
+    enrollment_create_date,
+    enrollment_confirmation_date,
+    enrollment_last_update_date,
+
+    application_create_date,
+    application_last_update_date
+
+FROM dbo.Enrollments_TEST
+
+WHERE household_id = 1217178
+
+ORDER BY
+
+    enrollment_create_date,
+    coverage_year,
+    enrollment_id,
+    enrollee_id;
+
+============================
 WITH target_policies AS (
     SELECT DISTINCT
         policy_id
