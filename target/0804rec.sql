@@ -1,43 +1,146 @@
-
-WITH ffm_pairs AS (
-    SELECT DISTINCT enrollee_id, policy_id
+WITH target_policies AS (
+    SELECT DISTINCT
+        LTRIM(RTRIM(CAST(policy_id AS VARCHAR(200)))) AS policy_id
     FROM (VALUES
-        ('1000000001', '1000008526'),
-        ('1000000002', '1000008526')
-        -- Excel'deki tüm enrollee_id + enrollment_id çiftleri
-    ) v(enrollee_id, policy_id)
+        ('1000008526'),
+        ('1000013043'),
+        ('1000022427')
+        -- kalan policy ID'leri buraya ekle
+    ) v(policy_id)
 ),
 
-raw_pairs AS (
+business_records AS (
     SELECT DISTINCT
-        LTRIM(RTRIM(CAST(member_id AS VARCHAR(200)))) AS enrollee_id,
+        LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200)))) AS policy_id,
+        LTRIM(RTRIM(CAST(e.enrollee_id AS VARCHAR(200)))) AS enrollee_id,
+
+        e.coverage_year,
+        e.hios_issuer_id,
+        e.source,
+        e.Insurance_Type,
+        e.enrollment_status_description,
+        e.enrollee_status_description,
+        e.benefit_effective_date,
+        e.benefit_end_date,
+        e.enrollment_create_date,
+        e.enrollment_last_update_date,
+        e.enrollee_create_date,
+        e.enrollee_last_update_date
+
+    FROM dbo.Enrollments_TEST e
+    INNER JOIN target_policies t
+        ON LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200)))) = t.policy_id
+),
+
+raw_records AS (
+    SELECT DISTINCT
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(ia.health_coverage_policy_no AS VARCHAR(200)))), '')
+        ) AS policy_id,
 
         COALESCE(
-            NULLIF(LTRIM(RTRIM(CAST(policy_id AS VARCHAR(200)))), ''),
-            NULLIF(LTRIM(RTRIM(CAST(health_coverage_policy_no AS VARCHAR(200)))), '')
-        ) AS policy_id
-    FROM dbo.inbound_automation
-    WHERE issuer = '37301'
-      AND folder_year IN (2025, 2026)
+            NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(200)))), '')
+        ) AS enrollee_id,
+
+        ia.issuer,
+        ia.coverage_year,
+        ia.folder_year,
+        ia.folder_month,
+        ia.enrolleeStatus,
+        ia.member_maint_effective_date,
+        ia.loaded_at,
+        ia.source_file,
+        ia.file_hash,
+        ia.row_number_in_file
+
+    FROM dbo.inbound_automation ia
+    INNER JOIN target_policies t
+        ON COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(ia.health_coverage_policy_no AS VARCHAR(200)))), '')
+        ) = t.policy_id
+),
+
+all_pairs AS (
+    SELECT
+        policy_id,
+        enrollee_id
+    FROM business_records
+
+    UNION
+
+    SELECT
+        policy_id,
+        enrollee_id
+    FROM raw_records
 )
 
 SELECT
-    COUNT(*) AS Total_FFM_Policy_Enrollee_Pairs,
+    p.policy_id,
+    p.enrollee_id,
 
-    SUM(CASE
-        WHEN r.policy_id IS NOT NULL THEN 1
-        ELSE 0
-    END) AS Exact_Policy_Enrollee_Matches,
+    CASE
+        WHEN b.policy_id IS NOT NULL
+         AND r.policy_id IS NOT NULL
+            THEN 'MATCHED POLICY + ENROLLEE'
 
-    SUM(CASE
-        WHEN r.policy_id IS NULL THEN 1
-        ELSE 0
-    END) AS Policy_Found_But_Enrollee_Not_Found
+        WHEN b.policy_id IS NOT NULL
+         AND r.policy_id IS NULL
+            THEN 'BUSINESS ONLY'
 
-FROM ffm_pairs f
-LEFT JOIN raw_pairs r
-    ON r.policy_id = f.policy_id
-   AND r.enrollee_id = f.enrollee_id;
+        WHEN b.policy_id IS NULL
+         AND r.policy_id IS NOT NULL
+            THEN 'RAW ONLY'
+
+        ELSE 'UNCLASSIFIED'
+    END AS match_status,
+
+    /* Business side */
+    b.coverage_year AS business_coverage_year,
+    b.hios_issuer_id AS business_issuer,
+    b.source AS business_source,
+    b.Insurance_Type AS business_insurance_type,
+    b.enrollment_status_description AS business_enrollment_status,
+    b.enrollee_status_description AS business_enrollee_status,
+    b.benefit_effective_date,
+    b.benefit_end_date,
+    b.enrollment_create_date,
+    b.enrollment_last_update_date,
+    b.enrollee_create_date,
+    b.enrollee_last_update_date,
+
+    /* Raw inbound side */
+    r.issuer AS raw_issuer,
+    r.coverage_year AS raw_coverage_year,
+    r.folder_year,
+    r.folder_month,
+    r.enrolleeStatus AS raw_status,
+    r.member_maint_effective_date,
+    r.loaded_at,
+    r.source_file,
+    r.file_hash,
+    r.row_number_in_file
+
+FROM all_pairs p
+
+LEFT JOIN business_records b
+    ON b.policy_id = p.policy_id
+   AND b.enrollee_id = p.enrollee_id
+
+LEFT JOIN raw_records r
+    ON r.policy_id = p.policy_id
+   AND r.enrollee_id = p.enrollee_id
+
+ORDER BY
+    p.policy_id,
+    p.enrollee_id,
+    match_status,
+    r.folder_year,
+    r.folder_month,
+    r.source_file;
 
 =======================
 WITH ffm_policies AS (
