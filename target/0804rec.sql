@@ -1,5 +1,39 @@
 
 SELECT
+    coverage_year,
+    household_id,
+    enrollee_id,
+    enrollment_id,
+    hios_issuer_id,
+    Insurance_Type,
+    source,
+
+    first_name,
+    last_name,
+    birth_date,
+
+    enrollment_status_description,
+    enrollee_status_description,
+
+    benefit_effective_date,
+    benefit_end_date,
+
+    enrollment_create_date,
+    enrollment_last_update_date
+
+FROM dbo.Enrollments_TEST
+
+WHERE
+    first_name = 'Kristle'
+AND last_name = 'Chester'
+
+ORDER BY
+    coverage_year,
+    enrollment_create_date,
+    enrollment_id;
+
+=============================
+SELECT
     'RAW_INBOUND_CHECK' AS Query_Check,
 
     ia.issuer,
