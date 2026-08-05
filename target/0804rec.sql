@@ -1,4 +1,71 @@
 
+WITH target_policies AS (
+    SELECT DISTINCT
+        policy_id
+    FROM (VALUES
+        ('1000008526')
+        -- Policy ID listesi
+    ) v(policy_id)
+),
+
+business_members AS (
+
+SELECT DISTINCT
+    CAST(e.enrollment_id AS varchar(50)) AS policy_id,
+    CAST(e.enrollee_id AS varchar(50)) AS enrollee_id,
+    e.person_type,
+    e.relationship_type,
+    e.source,
+    e.coverage_year,
+    e.household_id,
+    e.enrollment_status_description,
+    e.enrollee_status_description,
+    e.benefit_effective_date,
+    e.benefit_end_date,
+    e.enrollment_create_date
+
+FROM dbo.Enrollments_TEST e
+INNER JOIN target_policies t
+ON CAST(e.enrollment_id AS varchar(50))=t.policy_id
+),
+
+raw_members AS (
+
+SELECT DISTINCT
+
+COALESCE(
+CAST(policy_id AS varchar(50)),
+CAST(health_coverage_policy_no AS varchar(50))
+) policy_id,
+
+CAST(member_id AS varchar(50)) enrollee_id
+
+FROM dbo.inbound_automation
+WHERE issuer='37301'
+)
+
+SELECT *
+
+FROM business_members b
+
+LEFT JOIN raw_members r
+
+ON b.policy_id=r.policy_id
+AND b.enrollee_id=r.enrollee_id
+
+WHERE r.enrollee_id IS NULL
+
+AND
+(
+UPPER(person_type) LIKE '%SUBSCRIBER%'
+OR UPPER(relationship_type) LIKE '%SELF%'
+OR UPPER(relationship_type) LIKE '%SUBSCRIBER%'
+)
+
+ORDER BY
+policy_id;
+
+========================
 
 WITH target_policies AS (
     SELECT DISTINCT
