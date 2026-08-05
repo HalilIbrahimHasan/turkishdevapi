@@ -1,5 +1,48 @@
 
+SELECT
+    ia.issuer,
+    ia.coverage_year,
+    ia.folder_year,
+    ia.folder_month,
 
+    COALESCE(
+        NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))), ''),
+        NULLIF(LTRIM(RTRIM(CAST(ia.health_coverage_policy_no AS VARCHAR(200)))), '')
+    ) AS inbound_policy_id,
+
+    COALESCE(
+        NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200)))), ''),
+        NULLIF(LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(200)))), ''),
+        NULLIF(LTRIM(RTRIM(CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(200)))), '')
+    ) AS inbound_enrollee_id,
+
+    ia.enrolleeStatus,
+    ia.member_maint_effective_date,
+    ia.loaded_at,
+    ia.source_file
+
+FROM dbo.inbound_automation ia
+
+WHERE ia.issuer = '37301'
+  AND (
+        LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))) IN (
+            '210435217',
+            '211129273'
+        )
+        OR
+        LTRIM(RTRIM(CAST(ia.health_coverage_policy_no AS VARCHAR(200)))) IN (
+            '210435217',
+            '211129273'
+        )
+      )
+
+ORDER BY
+    inbound_policy_id,
+    inbound_enrollee_id,
+    ia.member_maint_effective_date,
+    ia.source_file;
+
+===================
 SELECT
     ia.issuer,
     ia.coverage_year,
