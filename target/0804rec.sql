@@ -1,4 +1,311 @@
 
+
+
+
+
+
+
+
+WITH target_pairs AS (
+    SELECT *
+    FROM (VALUES
+        ('211386306', '1000615233'),
+        ('211358549', '1000378196'),
+        ('211496204', '1000143675'),
+        ('212221579', '1000615231'),
+        ('211059524', '1001692606'),
+        ('211354345', '1000992750')
+    ) v(target_policy_id, target_enrollee_id)
+),
+
+/* Swathi pair'inin Enrollments_TEST içinde exact olarak bulunup bulunmadığı */
+exact_pair_check AS (
+    SELECT DISTINCT
+        t.target_policy_id,
+        t.target_enrollee_id,
+
+        e.household_id,
+        e.coverage_year,
+        CAST(e.enrollment_id AS VARCHAR(200)) AS enrollment_id,
+        CAST(e.enrollee_id AS VARCHAR(200)) AS enrollee_id,
+        e.enrollee_first_name,
+        e.enrollee_last_name,
+        e.birth_date,
+        e.hios_issuer_id,
+        e.source,
+        e.person_type,
+        e.relationship_type,
+        e.enrollment_status_description,
+        e.enrollee_status_description
+
+    FROM target_pairs t
+    LEFT JOIN dbo.Enrollments_TEST e
+        ON LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200))))
+             = t.target_policy_id
+       AND LTRIM(RTRIM(CAST(e.enrollee_id AS VARCHAR(200))))
+             = t.target_enrollee_id
+),
+
+/* Policy'nin Enrollments_TEST içindeki gerçek üyeleri */
+actual_policy_members AS (
+    SELECT DISTINCT
+        t.target_policy_id,
+        t.target_enrollee_id,
+
+        e.household_id,
+        e.coverage_year,
+
+        LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200))))
+            AS actual_policy_id,
+
+        LTRIM(RTRIM(CAST(e.enrollee_id AS VARCHAR(200))))
+            AS actual_policy_enrollee_id,
+
+        e.enrollee_first_name,
+        e.enrollee_last_name,
+        e.birth_date,
+        e.person_type,
+        e.relationship_type,
+        e.hios_issuer_id,
+        e.source,
+        e.enrollment_status_description,
+        e.enrollee_status_description
+
+    FROM target_pairs t
+    INNER JOIN dbo.Enrollments_TEST e
+        ON LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200))))
+             = t.target_policy_id
+),
+
+/* Target enrollee'nin gerçekte hangi policy ve household altında olduğu */
+actual_enrollee_history AS (
+    SELECT DISTINCT
+        t.target_policy_id,
+        t.target_enrollee_id,
+
+        e.household_id AS enrollee_actual_household_id,
+        e.coverage_year AS enrollee_actual_coverage_year,
+
+        LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200))))
+            AS enrollee_actual_policy_id,
+
+        LTRIM(RTRIM(CAST(e.enrollee_id AS VARCHAR(200))))
+            AS actual_enrollee_id,
+
+        e.enrollee_first_name AS actual_enrollee_first_name,
+        e.enrollee_last_name AS actual_enrollee_last_name,
+        e.birth_date AS actual_enrollee_birth_date,
+        e.hios_issuer_id AS enrollee_actual_issuer,
+        e.source AS enrollee_actual_source,
+        e.enrollment_status_description AS enrollee_actual_status
+
+    FROM target_pairs t
+    INNER JOIN dbo.Enrollments_TEST e
+        ON LTRIM(RTRIM(CAST(e.enrollee_id AS VARCHAR(200))))
+             = t.target_enrollee_id
+),
+
+/* Exact policy–enrollee pair raw inbound'da var mı? */
+raw_exact_pair AS (
+    SELECT DISTINCT
+        t.target_policy_id,
+        t.target_enrollee_id,
+
+        ia.issuer AS raw_issuer,
+        ia.coverage_year AS raw_coverage_year,
+        ia.folder_year,
+        ia.folder_month,
+        ia.enrolleeStatus AS raw_status,
+        ia.source_file
+
+    FROM target_pairs t
+    INNER JOIN dbo.inbound_automation ia
+        ON COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))), ''),
+            NULLIF(
+                LTRIM(RTRIM(
+                    CAST(ia.health_coverage_policy_no AS VARCHAR(200))
+                )),
+                ''
+            )
+        ) = t.target_policy_id
+
+       AND COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200)))), ''),
+            NULLIF(
+                LTRIM(RTRIM(
+                    CAST(ia.issuer_indiv_identifier AS VARCHAR(200))
+                )),
+                ''
+            ),
+            NULLIF(
+                LTRIM(RTRIM(
+                    CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(200))
+                )),
+                ''
+            )
+        ) = t.target_enrollee_id
+)
+
+/* ==========================================================
+   RESULT SET 1 — Summary and classification for every pair
+   ========================================================== */
+SELECT
+    t.target_policy_id,
+    t.target_enrollee_id,
+
+    CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM exact_pair_check x
+            WHERE x.target_policy_id = t.target_policy_id
+              AND x.target_enrollee_id = t.target_enrollee_id
+              AND x.enrollment_id IS NOT NULL
+        )
+        THEN 'YES'
+        ELSE 'NO'
+    END AS Exact_Pair_In_Enrollments_TEST,
+
+    CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM raw_exact_pair r
+            WHERE r.target_policy_id = t.target_policy_id
+              AND r.target_enrollee_id = t.target_enrollee_id
+        )
+        THEN 'YES'
+        ELSE 'NO'
+    END AS Exact_Pair_In_Raw_Inbound,
+
+    (
+        SELECT COUNT(DISTINCT p.actual_policy_enrollee_id)
+        FROM actual_policy_members p
+        WHERE p.target_policy_id = t.target_policy_id
+    ) AS Actual_Members_Under_Policy,
+
+    (
+        SELECT COUNT(DISTINCT h.enrollee_actual_policy_id)
+        FROM actual_enrollee_history h
+        WHERE h.target_enrollee_id = t.target_enrollee_id
+    ) AS Other_Policies_For_Target_Enrollee,
+
+    CASE
+        WHEN EXISTS (
+            SELECT 1
+            FROM exact_pair_check x
+            WHERE x.target_policy_id = t.target_policy_id
+              AND x.target_enrollee_id = t.target_enrollee_id
+              AND x.enrollment_id IS NOT NULL
+        )
+        THEN 'PAIR IS VALID IN ENROLLMENTS_TEST'
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM actual_policy_members p
+            WHERE p.target_policy_id = t.target_policy_id
+        )
+         AND EXISTS (
+            SELECT 1
+            FROM actual_enrollee_history h
+            WHERE h.target_enrollee_id = t.target_enrollee_id
+        )
+        THEN 'POLICY AND ENROLLEE BOTH EXIST, BUT NOT AS THE SAME PAIR'
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM actual_policy_members p
+            WHERE p.target_policy_id = t.target_policy_id
+        )
+        THEN 'POLICY EXISTS; TARGET ENROLLEE NOT FOUND'
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM actual_enrollee_history h
+            WHERE h.target_enrollee_id = t.target_enrollee_id
+        )
+        THEN 'ENROLLEE EXISTS; TARGET POLICY NOT FOUND'
+
+        ELSE 'NEITHER FOUND'
+    END AS Pair_Classification
+
+FROM target_pairs t
+ORDER BY t.target_policy_id;
+
+
+/* ==========================================================
+   RESULT SET 2 — Actual members currently tied to each policy
+   ========================================================== */
+SELECT
+    target_policy_id,
+    target_enrollee_id AS Expected_Enrollee_From_List,
+
+    actual_policy_id,
+    actual_policy_enrollee_id,
+    enrollee_first_name,
+    enrollee_last_name,
+    birth_date,
+    household_id,
+    coverage_year,
+    person_type,
+    relationship_type,
+    hios_issuer_id,
+    source,
+    enrollment_status_description,
+    enrollee_status_description
+
+FROM actual_policy_members
+ORDER BY
+    target_policy_id,
+    actual_policy_enrollee_id;
+
+
+/* ==========================================================
+   RESULT SET 3 — Where the expected enrollee actually belongs
+   ========================================================== */
+SELECT
+    target_policy_id AS Expected_Policy_From_List,
+    target_enrollee_id,
+
+    actual_enrollee_first_name,
+    actual_enrollee_last_name,
+    actual_enrollee_birth_date,
+
+    enrollee_actual_household_id,
+    enrollee_actual_coverage_year,
+    enrollee_actual_policy_id,
+    enrollee_actual_issuer,
+    enrollee_actual_source,
+    enrollee_actual_status
+
+FROM actual_enrollee_history
+ORDER BY
+    target_enrollee_id,
+    enrollee_actual_coverage_year,
+    enrollee_actual_policy_id;
+
+
+/* ==========================================================
+   RESULT SET 4 — Exact raw inbound pair evidence, if any
+   ========================================================== */
+SELECT
+    target_policy_id,
+    target_enrollee_id,
+    raw_issuer,
+    raw_coverage_year,
+    folder_year,
+    folder_month,
+    raw_status,
+    source_file
+
+FROM raw_exact_pair
+ORDER BY
+    target_policy_id,
+    target_enrollee_id,
+    folder_year,
+    folder_month;
+
+
+===========================
 SELECT
 
 coverage_year,
