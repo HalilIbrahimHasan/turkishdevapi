@@ -1,4 +1,164 @@
 
+
+WITH target_policies AS (
+    SELECT DISTINCT
+        LTRIM(RTRIM(CAST(policy_id AS VARCHAR(200)))) AS policy_id
+    FROM (VALUES
+        ('1000008526'),
+        ('1000013043'),
+        ('1000022427'),
+        ('11566586')
+        -- Kalan policy ID'lerini buraya ekle
+    ) v(policy_id)
+),
+
+business_members AS (
+    SELECT DISTINCT
+        LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200)))) AS policy_id,
+        LTRIM(RTRIM(CAST(e.enrollee_id AS VARCHAR(200)))) AS enrollee_id,
+
+        e.person_type,
+        e.relationship_type,
+        e.consumer_category,
+
+        e.coverage_year,
+        e.source,
+        e.Insurance_Type,
+        e.enrollment_status_description,
+        e.enrollee_status_description
+
+    FROM dbo.Enrollments_TEST e
+    INNER JOIN target_policies t
+        ON LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200))))
+         = t.policy_id
+),
+
+raw_members AS (
+    SELECT DISTINCT
+        COALESCE(
+            NULLIF(
+                LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))),
+                ''
+            ),
+            NULLIF(
+                LTRIM(RTRIM(
+                    CAST(ia.health_coverage_policy_no AS VARCHAR(200))
+                )),
+                ''
+            )
+        ) AS policy_id,
+
+        COALESCE(
+            NULLIF(
+                LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200)))),
+                ''
+            ),
+            NULLIF(
+                LTRIM(RTRIM(
+                    CAST(ia.issuer_indiv_identifier AS VARCHAR(200))
+                )),
+                ''
+            ),
+            NULLIF(
+                LTRIM(RTRIM(
+                    CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(200))
+                )),
+                ''
+            )
+        ) AS enrollee_id
+
+    FROM dbo.inbound_automation ia
+    INNER JOIN target_policies t
+        ON COALESCE(
+            NULLIF(
+                LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))),
+                ''
+            ),
+            NULLIF(
+                LTRIM(RTRIM(
+                    CAST(ia.health_coverage_policy_no AS VARCHAR(200))
+                )),
+                ''
+            )
+        ) = t.policy_id
+
+    WHERE ia.issuer = '37301'
+      AND ia.folder_year IN (2025, 2026)
+),
+
+classified_pairs AS (
+    SELECT
+        b.policy_id,
+        b.enrollee_id,
+
+        b.person_type,
+        b.relationship_type,
+        b.consumer_category,
+
+        CASE
+            WHEN r.enrollee_id IS NOT NULL
+                THEN 'MATCHED'
+            ELSE 'BUSINESS ONLY'
+        END AS match_status,
+
+        CASE
+            WHEN
+                UPPER(COALESCE(b.person_type, ''))
+                    LIKE '%SUBSCRIBER%'
+                OR UPPER(COALESCE(b.relationship_type, ''))
+                    LIKE '%SELF%'
+                OR UPPER(COALESCE(b.relationship_type, ''))
+                    LIKE '%SUBSCRIBER%'
+            THEN 'SUBSCRIBER'
+
+            WHEN
+                UPPER(COALESCE(b.relationship_type, ''))
+                    LIKE '%SPOUSE%'
+            THEN 'SPOUSE'
+
+            WHEN
+                UPPER(COALESCE(b.relationship_type, ''))
+                    LIKE '%CHILD%'
+                OR UPPER(COALESCE(b.relationship_type, ''))
+                    LIKE '%DEPENDENT%'
+            THEN 'CHILD / DEPENDENT'
+
+            ELSE 'OTHER / UNMAPPED'
+        END AS member_role
+
+    FROM business_members b
+    LEFT JOIN raw_members r
+        ON r.policy_id = b.policy_id
+       AND r.enrollee_id = b.enrollee_id
+)
+
+SELECT
+    match_status,
+    member_role,
+
+    COUNT(DISTINCT CONCAT(policy_id, '|', enrollee_id))
+        AS policy_enrollee_pairs,
+
+    COUNT(DISTINCT policy_id)
+        AS distinct_policies,
+
+    COUNT(DISTINCT enrollee_id)
+        AS distinct_enrollees
+
+FROM classified_pairs
+
+GROUP BY
+    match_status,
+    member_role
+
+ORDER BY
+    CASE
+        WHEN match_status = 'MATCHED' THEN 1
+        ELSE 2
+    END,
+    member_role;
+
+=============================
 WITH target_policies AS (
     SELECT DISTINCT
         LTRIM(RTRIM(CAST(policy_id AS VARCHAR(200)))) AS policy_id
