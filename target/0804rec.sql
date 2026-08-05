@@ -8,6 +8,42 @@ SELECT
     Insurance_Type,
     source,
 
+    enrollee_first_name,
+    enrollee_last_name,
+    first_name,
+    last_name,
+    birth_date,
+
+    enrollment_status_description,
+    enrollee_status_description,
+
+    benefit_effective_date,
+    benefit_end_date,
+
+    enrollment_create_date,
+    enrollment_last_update_date
+
+FROM dbo.Enrollments_TEST
+
+WHERE
+    UPPER(LTRIM(RTRIM(enrollee_first_name))) = 'KRISTLE'
+AND UPPER(LTRIM(RTRIM(enrollee_last_name))) = 'CHESTER'
+
+ORDER BY
+    coverage_year,
+    enrollment_create_date,
+    enrollment_id;
+
+==================
+SELECT
+    coverage_year,
+    household_id,
+    enrollee_id,
+    enrollment_id,
+    hios_issuer_id,
+    Insurance_Type,
+    source,
+
     first_name,
     last_name,
     birth_date,
