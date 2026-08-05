@@ -1,5 +1,20 @@
 
 SELECT
+coverage_year,
+household_id,
+enrollee_id,
+enrollee_first_name,
+enrollee_last_name,
+birth_date,
+enrollment_id,
+hios_issuer_id,
+enrollment_status_description
+FROM dbo.Enrollments_TEST
+WHERE enrollment_id=211386306
+ORDER BY enrollee_id;
+
+==============
+SELECT
     coverage_year,
     household_id,
     enrollee_id,
