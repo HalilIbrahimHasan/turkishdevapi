@@ -1,4 +1,45 @@
 
+WITH ffm_pairs AS (
+    SELECT DISTINCT enrollee_id, policy_id
+    FROM (VALUES
+        ('1000000001', '1000008526'),
+        ('1000000002', '1000008526')
+        -- Excel'deki tüm enrollee_id + enrollment_id çiftleri
+    ) v(enrollee_id, policy_id)
+),
+
+raw_pairs AS (
+    SELECT DISTINCT
+        LTRIM(RTRIM(CAST(member_id AS VARCHAR(200)))) AS enrollee_id,
+
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(policy_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(health_coverage_policy_no AS VARCHAR(200)))), '')
+        ) AS policy_id
+    FROM dbo.inbound_automation
+    WHERE issuer = '37301'
+      AND folder_year IN (2025, 2026)
+)
+
+SELECT
+    COUNT(*) AS Total_FFM_Policy_Enrollee_Pairs,
+
+    SUM(CASE
+        WHEN r.policy_id IS NOT NULL THEN 1
+        ELSE 0
+    END) AS Exact_Policy_Enrollee_Matches,
+
+    SUM(CASE
+        WHEN r.policy_id IS NULL THEN 1
+        ELSE 0
+    END) AS Policy_Found_But_Enrollee_Not_Found
+
+FROM ffm_pairs f
+LEFT JOIN raw_pairs r
+    ON r.policy_id = f.policy_id
+   AND r.enrollee_id = f.enrollee_id;
+
+=======================
 WITH ffm_policies AS (
     SELECT DISTINCT
         LTRIM(RTRIM(CAST(policy_id AS VARCHAR(200)))) AS policy_id
