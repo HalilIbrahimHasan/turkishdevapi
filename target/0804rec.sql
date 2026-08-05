@@ -1,3 +1,175 @@
+
+WITH target_policies AS (
+    SELECT DISTINCT
+        LTRIM(RTRIM(CAST(policy_id AS VARCHAR(200)))) AS policy_id
+    FROM (VALUES
+        ('1000008526'),
+        ('1000022427'),
+        ('11566586')
+        -- diğer policy ID'leri buraya ekle
+    ) v(policy_id)
+),
+
+business_members AS (
+    SELECT DISTINCT
+        LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200)))) AS policy_id,
+        LTRIM(RTRIM(CAST(e.enrollee_id AS VARCHAR(200)))) AS enrollee_id,
+        e.person_type,
+        e.relationship_type,
+        e.consumer_category,
+        e.coverage_year,
+        e.source,
+        e.enrollment_status_description,
+        e.enrollee_status_description
+    FROM dbo.Enrollments_TEST e
+    INNER JOIN target_policies t
+        ON LTRIM(RTRIM(CAST(e.enrollment_id AS VARCHAR(200)))) = t.policy_id
+),
+
+raw_members AS (
+    SELECT DISTINCT
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(
+                CAST(ia.health_coverage_policy_no AS VARCHAR(200))
+            )), '')
+        ) AS policy_id,
+
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(
+                CAST(ia.issuer_indiv_identifier AS VARCHAR(200))
+            )), ''),
+            NULLIF(LTRIM(RTRIM(
+                CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(200))
+            )), '')
+        ) AS enrollee_id,
+
+        ia.enrolleeStatus,
+        ia.folder_year,
+        ia.folder_month,
+        ia.source_file
+    FROM dbo.inbound_automation ia
+    INNER JOIN target_policies t
+        ON COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(
+                CAST(ia.health_coverage_policy_no AS VARCHAR(200))
+            )), '')
+        ) = t.policy_id
+    WHERE ia.issuer = '37301'
+      AND ia.folder_year IN (2025, 2026)
+),
+
+business_summary AS (
+    SELECT
+        b.policy_id,
+        COUNT(DISTINCT b.enrollee_id) AS Business_Enrollees,
+
+        COUNT(DISTINCT CASE
+            WHEN UPPER(COALESCE(b.person_type, '')) LIKE '%SUBSCRIBER%'
+              OR UPPER(COALESCE(b.relationship_type, '')) LIKE '%SELF%'
+              OR UPPER(COALESCE(b.relationship_type, '')) LIKE '%SUBSCRIBER%'
+            THEN b.enrollee_id
+        END) AS Business_Subscribers,
+
+        COUNT(DISTINCT CASE
+            WHEN UPPER(COALESCE(b.relationship_type, '')) LIKE '%SPOUSE%'
+            THEN b.enrollee_id
+        END) AS Business_Spouses,
+
+        COUNT(DISTINCT CASE
+            WHEN UPPER(COALESCE(b.relationship_type, '')) LIKE '%CHILD%'
+              OR UPPER(COALESCE(b.relationship_type, '')) LIKE '%DEPENDENT%'
+            THEN b.enrollee_id
+        END) AS Business_Children_Dependents
+    FROM business_members b
+    GROUP BY b.policy_id
+),
+
+raw_summary AS (
+    SELECT
+        r.policy_id,
+        COUNT(DISTINCT r.enrollee_id) AS Raw_Enrollees,
+        COUNT(DISTINCT r.source_file) AS Raw_Files
+    FROM raw_members r
+    GROUP BY r.policy_id
+),
+
+matched_summary AS (
+    SELECT
+        b.policy_id,
+
+        COUNT(DISTINCT CASE
+            WHEN r.enrollee_id IS NOT NULL THEN b.enrollee_id
+        END) AS Matched_Enrollees,
+
+        COUNT(DISTINCT CASE
+            WHEN r.enrollee_id IS NULL THEN b.enrollee_id
+        END) AS Business_Only_Enrollees,
+
+        COUNT(DISTINCT CASE
+            WHEN r.enrollee_id IS NULL
+             AND (
+                    UPPER(COALESCE(b.relationship_type, '')) LIKE '%SPOUSE%'
+                 OR UPPER(COALESCE(b.relationship_type, '')) LIKE '%CHILD%'
+                 OR UPPER(COALESCE(b.relationship_type, '')) LIKE '%DEPENDENT%'
+                 )
+            THEN b.enrollee_id
+        END) AS Missing_Spouse_Child_Dependent
+    FROM business_members b
+    LEFT JOIN raw_members r
+        ON r.policy_id = b.policy_id
+       AND r.enrollee_id = b.enrollee_id
+    GROUP BY b.policy_id
+)
+
+SELECT
+    t.policy_id,
+    COALESCE(bs.Business_Enrollees, 0) AS Business_Enrollees,
+    COALESCE(rs.Raw_Enrollees, 0) AS Raw_Enrollees,
+    COALESCE(ms.Matched_Enrollees, 0) AS Matched_Enrollees,
+    COALESCE(ms.Business_Only_Enrollees, 0)
+        AS Business_Only_Enrollees,
+
+    COALESCE(bs.Business_Subscribers, 0) AS Business_Subscribers,
+    COALESCE(bs.Business_Spouses, 0) AS Business_Spouses,
+    COALESCE(bs.Business_Children_Dependents, 0)
+        AS Business_Children_Dependents,
+
+    COALESCE(ms.Missing_Spouse_Child_Dependent, 0)
+        AS Missing_Spouse_Child_Dependent,
+
+    COALESCE(rs.Raw_Files, 0) AS Matching_Raw_Files,
+
+    CASE
+        WHEN COALESCE(ms.Matched_Enrollees, 0) > 0
+         AND COALESCE(ms.Business_Only_Enrollees, 0) > 0
+         AND COALESCE(ms.Missing_Spouse_Child_Dependent, 0) > 0
+        THEN 'SUBSCRIBER MATCHED; DEPENDENT(S) BUSINESS ONLY'
+
+        WHEN COALESCE(ms.Business_Only_Enrollees, 0) = 0
+         AND COALESCE(ms.Matched_Enrollees, 0) > 0
+        THEN 'ALL BUSINESS ENROLLEES MATCHED'
+
+        WHEN COALESCE(rs.Raw_Enrollees, 0) = 0
+        THEN 'POLICY NOT FOUND IN RAW'
+
+        ELSE 'REVIEW'
+    END AS Policy_Classification
+
+FROM target_policies t
+LEFT JOIN business_summary bs
+    ON bs.policy_id = t.policy_id
+LEFT JOIN raw_summary rs
+    ON rs.policy_id = t.policy_id
+LEFT JOIN matched_summary ms
+    ON ms.policy_id = t.policy_id
+ORDER BY
+    Policy_Classification,
+    t.policy_id;
+
+==============================
 WITH target_policies AS (
     SELECT DISTINCT
         LTRIM(RTRIM(CAST(policy_id AS VARCHAR(200)))) AS policy_id
