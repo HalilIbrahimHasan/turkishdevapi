@@ -1,5 +1,37 @@
 
 SELECT
+    'RAW_INBOUND_CHECK' AS Query_Check,
+
+    ia.issuer,
+    ia.coverage_year,
+    ia.folder_year,
+    ia.folder_month,
+
+    LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200))))
+        AS inbound_policy_id,
+
+    LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200))))
+        AS inbound_enrollee_id,
+
+    ia.enrolleeStatus AS raw_status,
+    ia.member_maint_effective_date,
+    ia.source_file
+
+FROM dbo.inbound_automation ia
+
+WHERE ia.issuer = '37301'
+  AND LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))) IN (
+        '210435217',
+        '211129273'
+      )
+
+ORDER BY
+    inbound_policy_id,
+    inbound_enrollee_id,
+    ia.member_maint_effective_date;
+
+======================
+SELECT
     ia.issuer,
     ia.coverage_year,
     ia.folder_year,
