@@ -1,3 +1,35 @@
+
+SELECT DISTINCT
+    ia.enrollee_id,
+    ia.policy_id,
+    ia.issuer,
+    ia.coverage_year,
+    ia.folder_year,
+    ia.folder_month,
+    ia.enrolleeStatus,
+    ia.member_maint_effective_date,
+    ia.source_file
+FROM dbo.inbound_automation ia
+WHERE ia.enrollee_id IN (
+
+'1000923947',
+'1001301643',
+'1001302341',
+'1001302403',
+'1001303876',
+'1001305545',
+'1001305548',
+'1002235873'
+
+)
+ORDER BY
+ia.enrollee_id,
+ia.coverage_year,
+ia.folder_year,
+ia.folder_month;
+
+
+================================
 WITH ffm_policies AS (
     SELECT DISTINCT policy_id
     FROM (VALUES
