@@ -1,4 +1,83 @@
 
+WITH target_enrollees AS (
+    SELECT DISTINCT
+        LTRIM(RTRIM(CAST(enrollee_id AS VARCHAR(200)))) AS enrollee_id
+    FROM (VALUES
+        ('1000923947'),
+        ('1001301643'),
+        ('1001302341'),
+        ('1001302403'),
+        ('1001303876'),
+        ('1001305545'),
+        ('1001305548'),
+        ('1002235873')
+        -- Swathi'nin tüm enrollee ID listesini buraya ekle
+    ) v(enrollee_id)
+),
+
+raw_matches AS (
+    SELECT DISTINCT
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(200)))), '')
+        ) AS raw_enrollee_id,
+
+        COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(ia.health_coverage_policy_no AS VARCHAR(200)))), '')
+        ) AS raw_policy_id,
+
+        ia.issuer,
+        ia.coverage_year,
+        ia.folder_year,
+        ia.folder_month,
+        ia.enrolleeStatus,
+        ia.member_maint_effective_date,
+        ia.loaded_at,
+        ia.source_file
+
+    FROM dbo.inbound_automation ia
+    WHERE COALESCE(
+            NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(200)))), ''),
+            NULLIF(LTRIM(RTRIM(CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(200)))), '')
+          ) IS NOT NULL
+)
+
+SELECT
+    t.enrollee_id AS FFM_Enrollee_ID,
+
+    CASE
+        WHEN r.raw_enrollee_id IS NOT NULL
+            THEN 'FOUND'
+        ELSE 'NOT FOUND'
+    END AS Automation_Match_Status,
+
+    r.raw_policy_id AS Automation_Policy_ID,
+    r.issuer AS Automation_Issuer,
+    r.coverage_year AS Automation_Coverage_Year,
+    r.folder_year,
+    r.folder_month,
+    r.enrolleeStatus AS Automation_Status,
+    r.member_maint_effective_date,
+    r.loaded_at,
+    r.source_file
+
+FROM target_enrollees t
+
+LEFT JOIN raw_matches r
+    ON r.raw_enrollee_id = t.enrollee_id
+
+ORDER BY
+    t.enrollee_id,
+    r.coverage_year,
+    r.folder_year,
+    r.folder_month,
+    r.raw_policy_id;
+
+
+===================
 SELECT DISTINCT
     ia.enrollee_id,
     ia.policy_id,
