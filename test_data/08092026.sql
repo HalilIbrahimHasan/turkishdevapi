@@ -1,3 +1,98 @@
+/* ============================================================
+   4. Save comparison result temporarily
+   ============================================================ */
+
+DROP TABLE IF EXISTS #comparison_results;
+
+SELECT *
+INTO #comparison_results
+FROM comparison;
+
+
+/* ============================================================
+   RESULT SET 1
+   Detailed record-level comparison
+   ============================================================ */
+
+SELECT *
+FROM #comparison_results
+ORDER BY
+    ffm_enrollee_id,
+    ffm_coverage_year,
+    ffm_policy_id,
+    folder_year,
+    folder_month,
+    source_file;
+
+
+/* ============================================================
+   RESULT SET 2
+   Overall Exact Match / Not Found Summary
+   ============================================================ */
+
+SELECT
+    pair_match_status,
+
+    COUNT(*) AS Rows,
+
+    COUNT(DISTINCT ffm_enrollee_id)
+        AS Distinct_Enrollees,
+
+    COUNT(DISTINCT ffm_policy_id)
+        AS Distinct_Policies,
+
+    COUNT(
+        DISTINCT CONCAT(
+            ffm_enrollee_id,
+            '|',
+            ffm_policy_id
+        )
+    ) AS Distinct_Enrollee_Policy_Pairs
+
+FROM #comparison_results
+
+GROUP BY
+    pair_match_status
+
+ORDER BY
+    pair_match_status;
+
+
+/* ============================================================
+   RESULT SET 3
+   2025 vs 2026 Breakdown
+   ============================================================ */
+
+SELECT
+    ffm_coverage_year,
+    pair_match_status,
+
+    COUNT(
+        DISTINCT CONCAT(
+            ffm_enrollee_id,
+            '|',
+            ffm_policy_id
+        )
+    ) AS Distinct_Pairs,
+
+    COUNT(DISTINCT ffm_enrollee_id)
+        AS Distinct_Enrollees,
+
+    COUNT(DISTINCT ffm_policy_id)
+        AS Distinct_Policies
+
+FROM #comparison_results
+
+GROUP BY
+    ffm_coverage_year,
+    pair_match_status
+
+ORDER BY
+    ffm_coverage_year,
+    pair_match_status;
+
+==============================
+
 WITH target_enrollees AS (
     SELECT DISTINCT enrollee_id
     FROM (VALUES
