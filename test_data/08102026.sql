@@ -1,5 +1,5 @@
 /* ============================================================
-   CLEANUP TEMP TABLE
+   CLEANUP
    ============================================================ */
 
 DROP TABLE IF EXISTS #comparison_results;
@@ -7,7 +7,7 @@ DROP TABLE IF EXISTS #comparison_results;
 
 /* ============================================================
    1. TARGET FFM ENROLLEES
-   Put Swathi's complete enrollee list here
+   Put Swathi's COMPLETE enrollee list here
    ============================================================ */
 
 WITH target_enrollees AS (
@@ -26,22 +26,22 @@ WITH target_enrollees AS (
         ('1001305548'),
         ('1002235873')
 
-        -- Add ALL remaining FFM enrollee IDs here
+        -- ADD ALL FFM ENROLLEE IDs HERE
 
     ) v(enrollee_id)
 ),
 
 
 /* ============================================================
-   2. REBUILD CORRECT FFM / ENROLLMENTS_TEST POPULATION
+   2. REBUILD FFM / BUSINESS PAIRS
 
-   Applicants:
-       applicant_guid
+   IMPORTANT:
+   NO COVERAGE YEAR FILTER
 
-            =
-
-   Enrollments_TEST:
-       enrollee_id
+   We only want:
+       Enrollee ID
+            +
+       Policy ID
    ============================================================ */
 
 ffm_business AS (
@@ -86,7 +86,6 @@ ffm_business AS (
     FROM dbo.PY242526_Applicants_test A
 
     INNER JOIN dbo.Enrollments_TEST E
-
         ON LTRIM(RTRIM(
                CAST(A.applicant_guid AS VARCHAR(200))
            ))
@@ -96,7 +95,6 @@ ffm_business AS (
            ))
 
     INNER JOIN target_enrollees t
-
         ON LTRIM(RTRIM(
                CAST(E.enrollee_id AS VARCHAR(200))
            ))
@@ -105,13 +103,16 @@ ffm_business AS (
 
     WHERE E.hios_issuer_id = 37301
 
-      AND E.coverage_year IN (2024, 2025, 2026)
-
+    -- NO COVERAGE YEAR FILTER
 ),
 
 
 /* ============================================================
-   3. NORMALIZE OUR INBOUND AUTOMATION POPULATION
+   3. ALL 37301 INBOUND AUTOMATION HISTORY
+
+   IMPORTANT:
+   NO FOLDER YEAR FILTER
+   NO COVERAGE YEAR FILTER
    ============================================================ */
 
 automation AS (
@@ -182,32 +183,32 @@ automation AS (
 
     WHERE ia.issuer = '37301'
 
-      AND ia.folder_year IN (2024, 2025, 2026)
-
+    -- NO YEAR FILTER AT ALL
 ),
 
 
 /* ============================================================
-   4. EXACT ENROLLEE + POLICY COMPARISON
+   4. EXACT PAIR COMPARISON
+
+   MATCH LOGIC:
+       enrollee_id
+           +
+       policy_id
+
+   YEAR DOES NOT PARTICIPATE IN MATCHING
    ============================================================ */
 
 comparison AS (
 
     SELECT
 
-        /* -------------------------
-           FFM / BUSINESS SIDE
-           ------------------------- */
+        /* ---------- FFM / BUSINESS ---------- */
 
         f.ssn,
-
         f.applicant_guid,
 
-        f.enrollee_id
-            AS ffm_enrollee_id,
-
-        f.policy_id
-            AS ffm_policy_id,
+        f.enrollee_id AS ffm_enrollee_id,
+        f.policy_id   AS ffm_policy_id,
 
         f.household_id,
 
@@ -217,14 +218,10 @@ comparison AS (
         f.person_type,
         f.relationship_type,
 
-        f.coverage_year
-            AS ffm_coverage_year,
+        f.coverage_year AS ffm_coverage_year,
 
-        f.hios_issuer_id
-            AS ffm_issuer,
-
-        f.source
-            AS ffm_source,
+        f.hios_issuer_id AS ffm_issuer,
+        f.source AS ffm_source,
 
         f.enrollment_status_description
             AS ffm_enrollment_status,
@@ -233,32 +230,22 @@ comparison AS (
             AS ffm_enrollee_status,
 
         f.benefit_effective_date,
-
         f.benefit_end_date,
 
         f.enrollment_create_date,
-
         f.enrollment_last_update_date,
 
 
-        /* -------------------------
-           AUTOMATION SIDE
-           ------------------------- */
+        /* ---------- AUTOMATION ---------- */
 
-        a.enrollee_id
-            AS automation_enrollee_id,
+        a.enrollee_id AS automation_enrollee_id,
+        a.policy_id   AS automation_policy_id,
 
-        a.policy_id
-            AS automation_policy_id,
+        a.issuer AS automation_issuer,
 
-        a.issuer
-            AS automation_issuer,
-
-        a.coverage_year
-            AS automation_coverage_year,
+        a.coverage_year AS automation_coverage_year,
 
         a.folder_year,
-
         a.folder_month,
 
         a.automation_status,
@@ -270,39 +257,31 @@ comparison AS (
         a.source_file,
 
 
-        /* -------------------------
-           MATCH CLASSIFICATION
-           ------------------------- */
+        /* ---------- CLASSIFICATION ---------- */
 
         CASE
+            WHEN a.enrollee_id IS NOT NULL
+             AND a.policy_id IS NOT NULL
 
-            WHEN
-                a.enrollee_id IS NOT NULL
-                AND a.policy_id IS NOT NULL
+            THEN 'EXACT ENROLLEE + POLICY MATCH'
 
-            THEN
-                'EXACT ENROLLEE + POLICY MATCH'
-
-            ELSE
-                'NOT FOUND AS EXACT PAIR'
+            ELSE 'NOT FOUND AS EXACT PAIR'
 
         END AS pair_match_status
 
 
     FROM ffm_business f
 
-
     LEFT JOIN automation a
 
         ON a.enrollee_id = f.enrollee_id
-
-       AND a.policy_id = f.policy_id
+       AND a.policy_id   = f.policy_id
 
 )
 
 
 /* ============================================================
-   5. SAVE COMPARISON INTO TEMP TABLE
+   5. SAVE RESULTS
    ============================================================ */
 
 SELECT *
@@ -312,7 +291,10 @@ FROM comparison;
 
 /* ============================================================
    RESULT SET 1
-   FULL RECORD-LEVEL DETAIL
+   FULL DETAIL
+
+   This is where we see WHERE the pair was found:
+   folder_year / coverage_year / source_file / status
    ============================================================ */
 
 SELECT *
@@ -322,13 +304,9 @@ FROM #comparison_results
 ORDER BY
 
     ffm_enrollee_id,
-
-    ffm_coverage_year,
-
     ffm_policy_id,
 
     folder_year,
-
     folder_month,
 
     source_file;
@@ -336,7 +314,7 @@ ORDER BY
 
 /* ============================================================
    RESULT SET 2
-   OVERALL MATCH SUMMARY
+   OVERALL EXACT-PAIR SUMMARY
    ============================================================ */
 
 SELECT
@@ -370,14 +348,15 @@ ORDER BY
 
 /* ============================================================
    RESULT SET 3
-   2024 VS 2025 VS 2026 BREAKDOWN
+   WHERE DID THE EXACT MATCHES ACTUALLY COME FROM?
+
+   This is now based on AUTOMATION FOLDER YEAR,
+   not FFM coverage year.
    ============================================================ */
 
 SELECT
 
-    ffm_coverage_year,
-
-    pair_match_status,
+    folder_year AS Automation_Folder_Year,
 
     COUNT(
         DISTINCT CONCAT(
@@ -385,7 +364,7 @@ SELECT
             '|',
             ffm_policy_id
         )
-    ) AS Distinct_Pairs,
+    ) AS Exact_Matched_Pairs,
 
     COUNT(DISTINCT ffm_enrollee_id)
         AS Distinct_Enrollees,
@@ -395,14 +374,52 @@ SELECT
 
 FROM #comparison_results
 
+WHERE pair_match_status =
+      'EXACT ENROLLEE + POLICY MATCH'
+
 GROUP BY
+    folder_year
+
+ORDER BY
+    folder_year;
+
+
+/* ============================================================
+   RESULT SET 4
+   COVERAGE YEAR VS PHYSICAL FOLDER YEAR
+
+   VERY IMPORTANT FOR THE 2024 QUESTION
+   ============================================================ */
+
+SELECT
 
     ffm_coverage_year,
 
-    pair_match_status
+    automation_coverage_year,
+
+    folder_year AS Automation_Folder_Year,
+
+    COUNT(
+        DISTINCT CONCAT(
+            ffm_enrollee_id,
+            '|',
+            ffm_policy_id
+        )
+    ) AS Exact_Matched_Pairs
+
+FROM #comparison_results
+
+WHERE pair_match_status =
+      'EXACT ENROLLEE + POLICY MATCH'
+
+GROUP BY
+
+    ffm_coverage_year,
+    automation_coverage_year,
+    folder_year
 
 ORDER BY
 
     ffm_coverage_year,
-
-    pair_match_status;
+    folder_year,
+    automation_coverage_year;
