@@ -1,370 +1,362 @@
 
-
 /* ============================================================
    CLEANUP
    ============================================================ */
 
+DROP TABLE IF EXISTS #target_enrollees;
 DROP TABLE IF EXISTS #ffm_pairs;
-DROP TABLE IF EXISTS #exact_matches;
+DROP TABLE IF EXISTS #automation_all;
 
 
 /* ============================================================
    1. TARGET FFM ENROLLEES
-   PUT SWATHI'S COMPLETE ENROLLEE LIST HERE
+   Swathi'nin full enrollee listesini buraya koy
    ============================================================ */
 
-WITH target_enrollees AS (
+SELECT DISTINCT
+    LTRIM(RTRIM(CAST(enrollee_id AS VARCHAR(200)))) AS enrollee_id
+INTO #target_enrollees
+FROM (VALUES
 
-    SELECT DISTINCT
-        LTRIM(RTRIM(CAST(enrollee_id AS VARCHAR(200)))) AS enrollee_id
+    ('1000923947'),
+    ('1001301643'),
+    ('1001302403'),
+    ('1001302341'),
+    ('1001303876'),
+    ('1001305545'),
+    ('1001305548'),
+    ('1002235873')
 
-    FROM (VALUES
+    -- Add all FFM enrollee IDs here
 
-        ('1000923947'),
-        ('1001301643'),
-        ('1001302403'),
-        ('1001302341'),
-        ('1001303876'),
-        ('1001305545'),
-        ('1001305548'),
-        ('1002235873')
-
-        -- ADD ALL FFM ENROLLEE IDs HERE
-
-    ) v(enrollee_id)
-),
-
-/* ============================================================
-   2. REBUILD ALL VALID 37301 FFM ENROLLEE + POLICY PAIRS
-      NO YEAR FILTER
-   ============================================================ */
-
-ffm_business AS (
-
-    SELECT DISTINCT
-
-        CAST(A.ssn AS VARCHAR(50)) AS ssn,
-
-        LTRIM(RTRIM(
-            CAST(A.applicant_guid AS VARCHAR(200))
-        )) AS applicant_guid,
-
-        LTRIM(RTRIM(
-            CAST(E.enrollee_id AS VARCHAR(200))
-        )) AS enrollee_id,
-
-        LTRIM(RTRIM(
-            CAST(E.enrollment_id AS VARCHAR(200))
-        )) AS policy_id,
-
-        E.household_id,
-
-        E.enrollee_first_name,
-        E.enrollee_last_name,
-
-        E.person_type,
-        E.relationship_type,
-
-        E.enrollment_status_description,
-        E.enrollee_status_description,
-
-        E.coverage_year,
-        E.hios_issuer_id,
-        E.source,
-
-        E.benefit_effective_date,
-        E.benefit_end_date,
-
-        E.enrollment_create_date,
-        E.enrollment_last_update_date
-
-    FROM dbo.PY242526_Applicants_test A
-
-    INNER JOIN dbo.Enrollments_TEST E
-        ON LTRIM(RTRIM(CAST(A.applicant_guid AS VARCHAR(200))))
-         = LTRIM(RTRIM(CAST(E.enrollee_id AS VARCHAR(200))))
-
-    INNER JOIN target_enrollees t
-        ON LTRIM(RTRIM(CAST(E.enrollee_id AS VARCHAR(200))))
-         = t.enrollee_id
-
-    WHERE E.hios_issuer_id = 37301
-)
-
-/* ============================================================
-   SAVE UNIQUE BUSINESS PAIRS
-   ============================================================ */
-
-SELECT *
-INTO #ffm_pairs
-FROM ffm_business;
+) v(enrollee_id);
 
 
 /* ============================================================
-   3. FIND EXACT PAIR IN AUTOMATION
-
-   KEY DIFFERENCE:
-   DO NOT COALESCE IDs.
-
-   ENROLLEE may match ANY of:
-      member_id
-      issuer_indiv_identifier
-      exchg_assigned_enrollee_id
-
-   POLICY may match ANY of:
-      policy_id
-      health_coverage_policy_no
-
-   NO YEAR FILTER.
+   2. REBUILD CORRECT FFM PAIRS
+   NO YEAR FILTER
+   Issuer 37301 business population
    ============================================================ */
 
 SELECT DISTINCT
 
-    f.ssn,
-    f.applicant_guid,
+    CAST(A.ssn AS VARCHAR(50)) AS ssn,
 
-    f.enrollee_id AS ffm_enrollee_id,
-    f.policy_id   AS ffm_policy_id,
+    LTRIM(RTRIM(CAST(A.applicant_guid AS VARCHAR(200))))
+        AS applicant_guid,
 
-    f.household_id,
+    LTRIM(RTRIM(CAST(E.enrollee_id AS VARCHAR(200))))
+        AS ffm_enrollee_id,
 
-    f.enrollee_first_name,
-    f.enrollee_last_name,
+    LTRIM(RTRIM(CAST(E.enrollment_id AS VARCHAR(200))))
+        AS ffm_policy_id,
 
-    f.person_type,
-    f.relationship_type,
+    E.household_id,
 
-    f.coverage_year AS ffm_coverage_year,
+    E.enrollee_first_name,
+    E.enrollee_last_name,
 
-    f.enrollment_status_description
-        AS ffm_enrollment_status,
+    E.person_type,
+    E.relationship_type,
 
-    f.enrollee_status_description
-        AS ffm_enrollee_status,
+    E.coverage_year AS ffm_coverage_year,
+    E.hios_issuer_id AS ffm_issuer,
 
-    /* ------------------------------
-       AUTOMATION RAW IDENTIFIERS
-       ------------------------------ */
+    E.enrollment_status_description,
+    E.enrollee_status_description,
 
-    LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200))))
-        AS automation_member_id,
+    E.enrollment_create_date,
+    E.enrollment_last_update_date
 
-    LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(200))))
-        AS automation_issuer_indiv_identifier,
+INTO #ffm_pairs
 
-    LTRIM(RTRIM(CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(200))))
-        AS automation_exchange_enrollee_id,
+FROM dbo.PY242526_Applicants_test A
 
-    LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200))))
-        AS automation_policy_id,
+INNER JOIN dbo.Enrollments_TEST E
+    ON LTRIM(RTRIM(CAST(A.applicant_guid AS VARCHAR(200))))
+     = LTRIM(RTRIM(CAST(E.enrollee_id AS VARCHAR(200))))
 
-    LTRIM(RTRIM(CAST(ia.health_coverage_policy_no AS VARCHAR(200))))
-        AS automation_health_policy_no,
+INNER JOIN #target_enrollees T
+    ON LTRIM(RTRIM(CAST(E.enrollee_id AS VARCHAR(200))))
+     = T.enrollee_id
 
-    ia.issuer AS automation_issuer,
+WHERE E.hios_issuer_id = 37301;
 
-    ia.coverage_year AS automation_coverage_year,
 
+/* ============================================================
+   3. NORMALIZE ALL AUTOMATION RECORDS
+   IMPORTANT:
+   ALL ISSUERS
+   ALL YEARS
+   ============================================================ */
+
+SELECT DISTINCT
+
+    COALESCE(
+        NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200)))), ''),
+        NULLIF(LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(200)))), ''),
+        NULLIF(LTRIM(RTRIM(CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(200)))), '')
+    ) AS automation_enrollee_id,
+
+    COALESCE(
+        NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200)))), ''),
+        NULLIF(LTRIM(RTRIM(CAST(ia.health_coverage_policy_no AS VARCHAR(200)))), '')
+    ) AS automation_policy_id,
+
+    ia.issuer,
+    ia.coverage_year,
     ia.folder_year,
     ia.folder_month,
-
-    ia.enrolleeStatus AS automation_status,
-
+    ia.enrolleeStatus,
     ia.member_maint_effective_date,
-
     ia.loaded_at,
+    ia.source_file
 
-    ia.source_file,
+INTO #automation_all
 
-
-    /* ========================================================
-       WHICH ENROLLEE COLUMN MATCHED?
-       ======================================================== */
-
-    CASE
-
-        WHEN LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200))))
-                = f.enrollee_id
-            THEN 'member_id'
-
-        WHEN LTRIM(RTRIM(CAST(
-                 ia.issuer_indiv_identifier AS VARCHAR(200)
-             ))) = f.enrollee_id
-            THEN 'issuer_indiv_identifier'
-
-        WHEN LTRIM(RTRIM(CAST(
-                 ia.exchg_assigned_enrollee_id AS VARCHAR(200)
-             ))) = f.enrollee_id
-            THEN 'exchg_assigned_enrollee_id'
-
-    END AS matched_enrollee_column,
-
-
-    /* ========================================================
-       WHICH POLICY COLUMN MATCHED?
-       ======================================================== */
-
-    CASE
-
-        WHEN LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200))))
-                = f.policy_id
-            THEN 'policy_id'
-
-        WHEN LTRIM(RTRIM(CAST(
-                 ia.health_coverage_policy_no AS VARCHAR(200)
-             ))) = f.policy_id
-            THEN 'health_coverage_policy_no'
-
-    END AS matched_policy_column
-
-
-INTO #exact_matches
-
-FROM #ffm_pairs f
-
-INNER JOIN dbo.inbound_automation ia
-
-    ON
-    (
-        /* ENROLLEE CAN MATCH ANY IDENTIFIER */
-
-        LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(200))))
-            = f.enrollee_id
-
-        OR
-
-        LTRIM(RTRIM(CAST(
-            ia.issuer_indiv_identifier AS VARCHAR(200)
-        ))) = f.enrollee_id
-
-        OR
-
-        LTRIM(RTRIM(CAST(
-            ia.exchg_assigned_enrollee_id AS VARCHAR(200)
-        ))) = f.enrollee_id
-    )
-
-    AND
-
-    (
-        /* POLICY CAN MATCH EITHER POLICY FIELD */
-
-        LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(200))))
-            = f.policy_id
-
-        OR
-
-        LTRIM(RTRIM(CAST(
-            ia.health_coverage_policy_no AS VARCHAR(200)
-        ))) = f.policy_id
-    )
-
-WHERE ia.issuer = '37301';
+FROM dbo.inbound_automation ia;
 
 
 /* ============================================================
    RESULT SET 1
-   EXACT MATCH DETAIL
+   HOW MANY FFM ENROLLEES EXIST ANYWHERE IN AUTOMATION?
    ============================================================ */
 
-SELECT *
-FROM #exact_matches
+SELECT
 
-ORDER BY
-    ffm_enrollee_id,
-    ffm_policy_id,
-    folder_year,
-    folder_month,
-    source_file;
+    COUNT(DISTINCT f.ffm_enrollee_id)
+        AS Total_FFM_Enrollees,
+
+    COUNT(
+        DISTINCT CASE
+            WHEN a.automation_enrollee_id IS NOT NULL
+            THEN f.ffm_enrollee_id
+        END
+    ) AS Enrollees_Found_Anywhere_In_Automation,
+
+    COUNT(
+        DISTINCT CASE
+            WHEN a.automation_enrollee_id IS NULL
+            THEN f.ffm_enrollee_id
+        END
+    ) AS Enrollees_Not_Found_Anywhere
+
+FROM #ffm_pairs f
+
+LEFT JOIN #automation_all a
+    ON a.automation_enrollee_id = f.ffm_enrollee_id;
 
 
 /* ============================================================
    RESULT SET 2
-   TRUE EXACT MATCH TOTALS
+   HOW MANY FFM POLICIES EXIST ANYWHERE IN AUTOMATION?
    ============================================================ */
 
 SELECT
 
-    COUNT(*) AS Matched_Transaction_Rows,
-
-    COUNT(DISTINCT ffm_enrollee_id)
-        AS Matched_Distinct_Enrollees,
-
-    COUNT(DISTINCT ffm_policy_id)
-        AS Matched_Distinct_Policies,
+    COUNT(DISTINCT f.ffm_policy_id)
+        AS Total_FFM_Policies,
 
     COUNT(
-        DISTINCT CONCAT(
-            ffm_enrollee_id,
-            '|',
-            ffm_policy_id
-        )
-    ) AS Matched_Distinct_Enrollee_Policy_Pairs
+        DISTINCT CASE
+            WHEN a.automation_policy_id IS NOT NULL
+            THEN f.ffm_policy_id
+        END
+    ) AS Policies_Found_Anywhere_In_Automation,
 
-FROM #exact_matches;
+    COUNT(
+        DISTINCT CASE
+            WHEN a.automation_policy_id IS NULL
+            THEN f.ffm_policy_id
+        END
+    ) AS Policies_Not_Found_Anywhere
+
+FROM #ffm_pairs f
+
+LEFT JOIN #automation_all a
+    ON a.automation_policy_id = f.ffm_policy_id;
 
 
 /* ============================================================
    RESULT SET 3
-   WHICH AUTOMATION ID COLUMN PRODUCED THE MATCH?
+   PAIR CLASSIFICATION
+
+   - exact pair exists anywhere
+   - enrollee exists, policy exists, but not together
+   - enrollee only
+   - policy only
+   - neither
    ============================================================ */
 
 SELECT
 
-    matched_enrollee_column,
-    matched_policy_column,
+    CASE
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_enrollee_id = f.ffm_enrollee_id
+              AND a.automation_policy_id   = f.ffm_policy_id
+        )
+        THEN 'EXACT PAIR FOUND ANYWHERE'
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_enrollee_id = f.ffm_enrollee_id
+        )
+        AND EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_policy_id = f.ffm_policy_id
+        )
+        THEN 'ENROLLEE + POLICY BOTH EXIST, BUT NOT AS SAME PAIR'
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_enrollee_id = f.ffm_enrollee_id
+        )
+        THEN 'ENROLLEE FOUND, POLICY NOT FOUND'
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_policy_id = f.ffm_policy_id
+        )
+        THEN 'POLICY FOUND, ENROLLEE NOT FOUND'
+
+        ELSE 'NEITHER FOUND'
+
+    END AS Match_Category,
 
     COUNT(
         DISTINCT CONCAT(
-            ffm_enrollee_id,
+            f.ffm_enrollee_id,
             '|',
-            ffm_policy_id
+            f.ffm_policy_id
         )
-    ) AS Distinct_Matched_Pairs,
+    ) AS Distinct_Enrollee_Policy_Pairs,
 
-    COUNT(DISTINCT ffm_enrollee_id)
+    COUNT(DISTINCT f.ffm_enrollee_id)
         AS Distinct_Enrollees,
 
-    COUNT(DISTINCT ffm_policy_id)
+    COUNT(DISTINCT f.ffm_policy_id)
         AS Distinct_Policies
 
-FROM #exact_matches
+FROM #ffm_pairs f
 
 GROUP BY
-    matched_enrollee_column,
-    matched_policy_column
+
+    CASE
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_enrollee_id = f.ffm_enrollee_id
+              AND a.automation_policy_id   = f.ffm_policy_id
+        )
+        THEN 'EXACT PAIR FOUND ANYWHERE'
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_enrollee_id = f.ffm_enrollee_id
+        )
+        AND EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_policy_id = f.ffm_policy_id
+        )
+        THEN 'ENROLLEE + POLICY BOTH EXIST, BUT NOT AS SAME PAIR'
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_enrollee_id = f.ffm_enrollee_id
+        )
+        THEN 'ENROLLEE FOUND, POLICY NOT FOUND'
+
+        WHEN EXISTS (
+            SELECT 1
+            FROM #automation_all a
+            WHERE a.automation_policy_id = f.ffm_policy_id
+        )
+        THEN 'POLICY FOUND, ENROLLEE NOT FOUND'
+
+        ELSE 'NEITHER FOUND'
+
+    END
 
 ORDER BY
-    Distinct_Matched_Pairs DESC;
+    Match_Category;
 
 
 /* ============================================================
    RESULT SET 4
-   WHERE DO THE MATCHES PHYSICALLY LIVE?
+   FOR NON-EXACT FFM PAIRS:
+   WHERE DOES THE SAME ENROLLEE ACTUALLY APPEAR?
+
+   This shows other issuer / policy / status lifecycle
    ============================================================ */
 
-SELECT
+SELECT DISTINCT
 
-    folder_year,
-    automation_coverage_year,
+    f.ffm_enrollee_id,
 
-    COUNT(
-        DISTINCT CONCAT(
-            ffm_enrollee_id,
-            '|',
-            ffm_policy_id
-        )
-    ) AS Distinct_Matched_Pairs,
+    f.ffm_policy_id
+        AS Expected_37301_Policy,
 
-    COUNT(DISTINCT ffm_enrollee_id)
-        AS Distinct_Enrollees
+    f.enrollee_first_name,
+    f.enrollee_last_name,
 
-FROM #exact_matches
+    f.ffm_coverage_year,
 
-GROUP BY
-    folder_year,
-    automation_coverage_year
+    f.enrollment_status_description
+        AS FFM_Status,
+
+    a.automation_policy_id
+        AS Actual_Automation_Policy,
+
+    a.issuer
+        AS Actual_Automation_Issuer,
+
+    a.coverage_year
+        AS Automation_Coverage_Year,
+
+    a.folder_year,
+    a.folder_month,
+
+    a.enrolleeStatus
+        AS Automation_Status,
+
+    a.member_maint_effective_date,
+
+    a.source_file
+
+FROM #ffm_pairs f
+
+INNER JOIN #automation_all a
+    ON a.automation_enrollee_id = f.ffm_enrollee_id
+
+WHERE NOT EXISTS (
+
+    SELECT 1
+    FROM #automation_all x
+
+    WHERE x.automation_enrollee_id = f.ffm_enrollee_id
+      AND x.automation_policy_id   = f.ffm_policy_id
+
+)
 
 ORDER BY
-    folder_year,
-    automation_coverage_year;
+
+    f.ffm_enrollee_id,
+
+    a.folder_year,
+
+    a.folder_month,
+
+    a.issuer,
+
+    a.automation_policy_id;
