@@ -1,5 +1,3 @@
-
-
 -- =============================================================================
 -- YEAR-CARRY-FORWARD HYPOTHESIS — Independent population reconciliation
 -- =============================================================================
@@ -939,6 +937,131 @@ ORDER BY
     Inbound_Issuer,
     Canonical_Policy_Key,
     Canonical_Enrollee_Key;
+
+
+-- =============================================================================
+-- RESULT 7 — Focused mutually exclusive population summary
+-- =============================================================================
+-- EXCLUDES: 2025_ONLY entities that do NOT exact-match the 2026 FFM target.
+-- BOTH_2025_AND_2026 kept as separate buckets (no double-count with 2025/2026).
+-- Matching logic unchanged — classification only.
+-- =============================================================================
+IF OBJECT_ID('tempdb..#focused_pop') IS NOT NULL DROP TABLE #focused_pop;
+
+SELECT
+    Combined_Business_Key,
+    Year_Pattern,
+    Reconciliation_Category,
+    CASE
+        /* 2025-only carry-forward that hits 2026 FFM target */
+        WHEN Year_Pattern = '2025_ONLY'
+         AND Reconciliation_Category = 'EXACT_POLICY_ENROLLEE_IN_2026_FFM_TARGET'
+            THEN '2025_CARRY_FORWARD_MATCHED'
+
+        /* BOTH: separate so not double-counted into 2025 + 2026 */
+        WHEN Year_Pattern = 'BOTH_2025_AND_2026'
+         AND Reconciliation_Category = 'EXACT_POLICY_ENROLLEE_IN_2026_FFM_TARGET'
+            THEN 'BOTH_2025_AND_2026_EXACT_POLICY_ENROLLEE'
+        WHEN Year_Pattern = 'BOTH_2025_AND_2026'
+         AND Reconciliation_Category = 'ENROLLEE_IN_2026_TARGET_DIFFERENT_POLICY'
+            THEN 'BOTH_2025_AND_2026_ENROLLEE_DIFFERENT_POLICY'
+        WHEN Year_Pattern = 'BOTH_2025_AND_2026'
+         AND Reconciliation_Category = 'POLICY_IN_2026_TARGET_DIFFERENT_ENROLLEE'
+            THEN 'BOTH_2025_AND_2026_POLICY_DIFFERENT_ENROLLEE'
+        WHEN Year_Pattern = 'BOTH_2025_AND_2026'
+         AND Reconciliation_Category = 'INBOUND_CONFIRM_NOT_IN_2026_FFM_TARGET'
+            THEN 'BOTH_2025_AND_2026_NOT_IN_FFM_TARGET'
+
+        /* 2026-only CONFIRM classifications */
+        WHEN Year_Pattern = '2026_ONLY'
+         AND Reconciliation_Category = 'EXACT_POLICY_ENROLLEE_IN_2026_FFM_TARGET'
+            THEN '2026_ONLY_EXACT_POLICY_ENROLLEE'
+        WHEN Year_Pattern = '2026_ONLY'
+         AND Reconciliation_Category = 'ENROLLEE_IN_2026_TARGET_DIFFERENT_POLICY'
+            THEN '2026_ONLY_ENROLLEE_DIFFERENT_POLICY'
+        WHEN Year_Pattern = '2026_ONLY'
+         AND Reconciliation_Category = 'POLICY_IN_2026_TARGET_DIFFERENT_ENROLLEE'
+            THEN '2026_ONLY_POLICY_DIFFERENT_ENROLLEE'
+        WHEN Year_Pattern = '2026_ONLY'
+         AND Reconciliation_Category = 'INBOUND_CONFIRM_NOT_IN_2026_FFM_TARGET'
+            THEN '2026_ONLY_NOT_IN_FFM_TARGET'
+
+        ELSE NULL  /* 2025_ONLY non-exact → excluded */
+    END AS Population_Category
+INTO #focused_pop
+FROM #master_final
+WHERE NOT (
+        Year_Pattern = '2025_ONLY'
+    AND Reconciliation_Category <> 'EXACT_POLICY_ENROLLEE_IN_2026_FFM_TARGET'
+);
+
+DELETE FROM #focused_pop WHERE Population_Category IS NULL;
+
+DECLARE @focused_total BIGINT = (SELECT COUNT(*) FROM #focused_pop);
+
+DECLARE @cf_2025 BIGINT = (
+    SELECT COUNT(*) FROM #focused_pop WHERE Population_Category = '2025_CARRY_FORWARD_MATCHED'
+);
+DECLARE @pop_2026_included BIGINT = (
+    SELECT COUNT(*) FROM #focused_pop
+    WHERE Population_Category LIKE '2026_ONLY_%'
+       OR Population_Category LIKE 'BOTH_2025_AND_2026_%'
+);
+DECLARE @both_adj BIGINT = (
+    SELECT COUNT(*) FROM #focused_pop WHERE Population_Category LIKE 'BOTH_2025_AND_2026_%'
+);
+DECLARE @final_relevant BIGINT = @focused_total; /* = @cf_2025 + @pop_2026_included */
+
+SELECT
+    Population_Category,
+    COUNT(*) AS Entity_Count,
+    CAST(100.0 * COUNT(*) / NULLIF(@focused_total, 0) AS DECIMAL(10, 4)) AS Percentage_of_Total
+FROM #focused_pop
+GROUP BY Population_Category
+ORDER BY
+    CASE Population_Category
+        WHEN '2025_CARRY_FORWARD_MATCHED' THEN 1
+        WHEN 'BOTH_2025_AND_2026_EXACT_POLICY_ENROLLEE' THEN 2
+        WHEN 'BOTH_2025_AND_2026_ENROLLEE_DIFFERENT_POLICY' THEN 3
+        WHEN 'BOTH_2025_AND_2026_POLICY_DIFFERENT_ENROLLEE' THEN 4
+        WHEN 'BOTH_2025_AND_2026_NOT_IN_FFM_TARGET' THEN 5
+        WHEN '2026_ONLY_EXACT_POLICY_ENROLLEE' THEN 6
+        WHEN '2026_ONLY_ENROLLEE_DIFFERENT_POLICY' THEN 7
+        WHEN '2026_ONLY_POLICY_DIFFERENT_ENROLLEE' THEN 8
+        WHEN '2026_ONLY_NOT_IN_FFM_TARGET' THEN 9
+        ELSE 99
+    END;
+
+
+-- =============================================================================
+-- RESULT 8 — Focused population vs FFM 960,531 (no "missing" label)
+-- =============================================================================
+SELECT
+    metric,
+    value_count,
+    note
+FROM (VALUES
+    ('total_2025_carry_forward_matched', @cf_2025,
+        '2025_ONLY inbound CONFIRM exact in 2026 FFM target'),
+    ('total_2026_CONFIRM_population_included', @pop_2026_included,
+        '2026_ONLY + BOTH_2025_AND_2026 (all reconciliation classes)'),
+    ('overlap_BOTH_adjustment', @both_adj,
+        'BOTH_2025_AND_2026 count held separate; already inside 2026 included'),
+    ('final_distinct_relevant_inbound_population', @final_relevant,
+        '2025_CARRY_FORWARD_MATCHED + 2026 included (mutually exclusive; no double-count)'),
+    ('FFM_2026_Enrolled_Pending', @ffm_total,
+        'expected 960,531'),
+    ('numeric_difference_relevant_inbound_minus_FFM', (@final_relevant - @ffm_total),
+        'Signed difference only — not labeled missing/error'),
+    ('numeric_difference_FFM_minus_relevant_inbound', (@ffm_total - @final_relevant),
+        'Signed difference only — not labeled missing/error'),
+    ('excluded_2025_ONLY_not_in_FFM_target', (
+        SELECT COUNT(*) FROM #master_final
+        WHERE Year_Pattern = '2025_ONLY'
+          AND Reconciliation_Category <> 'EXACT_POLICY_ENROLLEE_IN_2026_FFM_TARGET'
+     ),
+        'Excluded from this focused summary by design')
+) AS v(metric, value_count, note);
 
 SET @msg = CONCAT('ALL DONE; total_elapsed_s=', DATEDIFF(second, @t0, SYSDATETIME()));
 RAISERROR(@msg, 10, 1) WITH NOWAIT;
