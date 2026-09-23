@@ -1,114 +1,95 @@
+
+
+
 -- =============================================================================
--- FOCUSED 2026 RELEVANT POPULATION (OPTIMIZED)
+-- EXPORT 2 — 2026 CONFIRM business entities NOT exact in FFM target
 -- =============================================================================
--- Purpose:
---   Lightweight focused population only:
---     A) 2025 CONFIRM exact carry-forward vs 2026 FFM target (FFM-first; no full
---        2025 CONFIRM load)
---     B) All 2026 CONFIRM business entities classified vs same FFM target
---   Deduplicate 2025+2026 exact at FFM Policy+Enrollee grain.
---
--- Does NOT:
---   - modify year_carry_forward_2025_2026_confirm_population_reconciliation.sql
---   - load full 2025+2026 combined bridges
---   - run all-year Enrollments_TEST diagnostics / STRING_AGG / giant masters
---
--- Safety: READ ONLY. Temp tables/indexes only. No RCNI.
+-- Source: 2026 inbound CONFIRM only (validated reverse entity methodology).
+-- Exclude exact Policy+Enrollee matches.
+-- Export mutually exclusive:
+--   ENROLLEE_IN_TARGET_DIFFERENT_POLICY
+--   POLICY_IN_TARGET_DIFFERENT_ENROLLEE
+--   INBOUND_CONFIRM_NOT_IN_FFM_TARGET
+-- Do NOT include 2025 unmatched. No STRING_AGG. No all-year diagnostics.
+-- READ ONLY. Temp tables only. No RCNI.
 -- =============================================================================
 
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
-DECLARE @ffm_year INT = 2026;
-DECLARE @expected_ffm_total BIGINT = 960531;
-DECLARE @expected_ffm_enrolled BIGINT = 945039;
-DECLARE @expected_ffm_pending BIGINT = 15492;
-DECLARE @expected_2026_confirm_raw BIGINT = 551208;
-DECLARE @expected_2026_confirm_entities BIGINT = 501369;
+DECLARE @coverage_year INT = 2026;
+DECLARE @expected_ffm BIGINT = 960531;
+DECLARE @expected_2026_raw BIGINT = 551208;
+DECLARE @expected_2026_entities BIGINT = 501369;
 
 DECLARE @t0 DATETIME2 = SYSDATETIME();
-DECLARE @t_phase DATETIME2 = SYSDATETIME();
 DECLARE @msg NVARCHAR(400);
 
-
--- =============================================================================
--- STEP 1 — FFM 2026 Enrolled/Pending target
--- =============================================================================
-RAISERROR('STEP1 start: FFM target', 10, 1) WITH NOWAIT;
+RAISERROR('EXPORT2 STEP1: FFM target', 10, 1) WITH NOWAIT;
 
 IF OBJECT_ID('tempdb..#ffm_target') IS NOT NULL DROP TABLE #ffm_target;
 
 SELECT
+    e.coverage_year AS FFM_Coverage_Year,
     CAST(e.enrollment_id AS VARCHAR(100)) AS FFM_Policy_ID,
     CAST(e.enrollee_id AS VARCHAR(100)) AS FFM_Enrollee_ID,
-    CASE
-        WHEN UPPER(LTRIM(RTRIM(e.enrollment_status_description))) = 'ENROLLED' THEN 'ENROLLED'
-        ELSE 'PENDING'
-    END AS FFM_Status_Bucket
+    CAST(e.hios_issuer_id AS VARCHAR(20)) AS FFM_Issuer,
+    e.enrollment_status_description AS FFM_Enrollment_Status,
+    e.enrollee_status_description AS FFM_Enrollee_Status
 INTO #ffm_target
 FROM (
     SELECT
+        e.coverage_year,
         e.enrollment_id,
         e.enrollee_id,
+        e.hios_issuer_id,
         e.enrollment_status_description,
+        e.enrollee_status_description,
         ROW_NUMBER() OVER (
             PARTITION BY e.coverage_year, e.enrollment_id, e.enrollee_id
             ORDER BY e.enrollment_last_update_date DESC, e.enrollment_create_date DESC
         ) AS _rn
     FROM dbo.Enrollments_TEST AS e
-    WHERE e.coverage_year = @ffm_year
+    WHERE e.coverage_year = @coverage_year
       AND UPPER(LTRIM(RTRIM(e.enrollment_status_description))) IN ('ENROLLED', 'PENDING')
 ) AS e
 WHERE e._rn = 1;
 
 CREATE UNIQUE CLUSTERED INDEX CX_ffm
-    ON #ffm_target (FFM_Policy_ID, FFM_Enrollee_ID);
+    ON #ffm_target (FFM_Coverage_Year, FFM_Policy_ID, FFM_Enrollee_ID);
 CREATE NONCLUSTERED INDEX IX_ffm_eel
-    ON #ffm_target (FFM_Enrollee_ID) INCLUDE (FFM_Policy_ID);
+    ON #ffm_target (FFM_Enrollee_ID) INCLUDE (FFM_Policy_ID, FFM_Issuer, FFM_Enrollment_Status, FFM_Enrollee_Status);
 CREATE NONCLUSTERED INDEX IX_ffm_pol
-    ON #ffm_target (FFM_Policy_ID) INCLUDE (FFM_Enrollee_ID);
+    ON #ffm_target (FFM_Policy_ID) INCLUDE (FFM_Enrollee_ID, FFM_Issuer, FFM_Enrollment_Status, FFM_Enrollee_Status);
 
-DECLARE @ffm_total BIGINT = (SELECT COUNT(*) FROM #ffm_target);
-DECLARE @ffm_enrolled BIGINT = (SELECT COUNT(*) FROM #ffm_target WHERE FFM_Status_Bucket = 'ENROLLED');
-DECLARE @ffm_pending BIGINT = (SELECT COUNT(*) FROM #ffm_target WHERE FFM_Status_Bucket = 'PENDING');
-
-SET @msg = CONCAT(
-    'STEP1 done in ', DATEDIFF(second, @t_phase, SYSDATETIME()),
-    's; total=', @ffm_total, '; enrolled=', @ffm_enrolled, '; pending=', @ffm_pending
-);
+DECLARE @ffm_count BIGINT = (SELECT COUNT(*) FROM #ffm_target);
+SET @msg = CONCAT('EXPORT2 FFM=', @ffm_count, ' elapsed_s=', DATEDIFF(second, @t0, SYSDATETIME()));
 RAISERROR(@msg, 10, 1) WITH NOWAIT;
 
-IF @ffm_total <> @expected_ffm_total
-   OR @ffm_enrolled <> @expected_ffm_enrolled
-   OR @ffm_pending <> @expected_ffm_pending
+IF @ffm_count <> @expected_ffm
 BEGIN
-    RAISERROR(
-        'FFM TARGET FAILED: total=%I64d (exp %I64d), enrolled=%I64d (exp %I64d), pending=%I64d (exp %I64d). Aborting.',
-        16, 1,
-        @ffm_total, @expected_ffm_total,
-        @ffm_enrolled, @expected_ffm_enrolled,
-        @ffm_pending, @expected_ffm_pending
-    );
+    RAISERROR('EXPORT2 STOP: FFM target %I64d <> expected %I64d', 16, 1, @ffm_count, @expected_ffm);
     RETURN;
 END;
 
-
--- =============================================================================
--- STEP 2 — 2026 CONFIRM only (business entities)
--- =============================================================================
-SET @t_phase = SYSDATETIME();
-RAISERROR('STEP2 start: 2026 CONFIRM entities', 10, 1) WITH NOWAIT;
+RAISERROR('EXPORT2 STEP2: 2026 CONFIRM entities', 10, 1) WITH NOWAIT;
 
 IF OBJECT_ID('tempdb..#c2026_raw') IS NOT NULL DROP TABLE #c2026_raw;
 
 SELECT
     ia.id AS inbound_row_id,
     CAST(ia.issuer AS VARCHAR(20)) AS Inbound_Issuer,
+    ia.coverage_year AS Inbound_Coverage_Year,
     NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(100)))), '') AS Inbound_Member_ID,
     NULLIF(LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(100)))), '') AS Inbound_Issuer_Indiv_Identifier,
     NULLIF(LTRIM(RTRIM(CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(100)))), '') AS Inbound_Exchange_Assigned_Enrollee_ID,
     NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(100)))), '') AS Inbound_Policy_ID,
     NULLIF(LTRIM(RTRIM(CAST(ia.health_coverage_policy_no AS VARCHAR(100)))), '') AS Inbound_Health_Coverage_Policy_No,
+    ia.enrolleeStatus AS Inbound_Status,
+    ia.member_maint_effective_date,
+    ia.benefit_effective_date,
+    ia.benefit_end_date,
+    ia.source_file AS Inbound_Source_File,
     COALESCE(
         NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(100)))), ''),
         NULLIF(LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(100)))), ''),
@@ -125,418 +106,262 @@ WHERE ia.coverage_year = 2026
 
 DECLARE @raw_2026 BIGINT = (SELECT COUNT(*) FROM #c2026_raw);
 
-IF OBJECT_ID('tempdb..#c2026_bridge') IS NOT NULL DROP TABLE #c2026_bridge;
+IF OBJECT_ID('tempdb..#bridge') IS NOT NULL DROP TABLE #bridge;
 
 SELECT
     CAST(r.Inbound_Issuer AS VARCHAR(20))
+        + N'|' + CAST(r.Inbound_Coverage_Year AS VARCHAR(10))
         + N'|' + r.Canonical_Policy_Key
-        + N'|' + r.Canonical_Enrollee_Key AS Business_Key,
-    r.inbound_row_id,
-    r.Inbound_Member_ID,
-    r.Inbound_Issuer_Indiv_Identifier,
-    r.Inbound_Exchange_Assigned_Enrollee_ID,
-    r.Inbound_Policy_ID,
-    r.Inbound_Health_Coverage_Policy_No
-INTO #c2026_bridge
+        + N'|' + r.Canonical_Enrollee_Key AS Inbound_Business_Key,
+    r.*
+INTO #bridge
 FROM #c2026_raw AS r
 WHERE r.Canonical_Enrollee_Key IS NOT NULL
   AND r.Canonical_Policy_Key IS NOT NULL;
 
-CREATE CLUSTERED INDEX CX_c2026_br ON #c2026_bridge (Business_Key, inbound_row_id);
-CREATE NONCLUSTERED INDEX IX_c2026_member ON #c2026_bridge (Inbound_Member_ID) INCLUDE (Business_Key);
-CREATE NONCLUSTERED INDEX IX_c2026_ii ON #c2026_bridge (Inbound_Issuer_Indiv_Identifier) INCLUDE (Business_Key);
-CREATE NONCLUSTERED INDEX IX_c2026_ex ON #c2026_bridge (Inbound_Exchange_Assigned_Enrollee_ID) INCLUDE (Business_Key);
-CREATE NONCLUSTERED INDEX IX_c2026_pol ON #c2026_bridge (Inbound_Policy_ID) INCLUDE (Business_Key);
-CREATE NONCLUSTERED INDEX IX_c2026_hc ON #c2026_bridge (Inbound_Health_Coverage_Policy_No) INCLUDE (Business_Key);
+DROP TABLE #c2026_raw;
 
-IF OBJECT_ID('tempdb..#c2026_entity') IS NOT NULL DROP TABLE #c2026_entity;
+CREATE CLUSTERED INDEX CX_bridge ON #bridge (Inbound_Business_Key, inbound_row_id);
+CREATE NONCLUSTERED INDEX IX_br_member ON #bridge (Inbound_Member_ID) INCLUDE (Inbound_Business_Key);
+CREATE NONCLUSTERED INDEX IX_br_ii ON #bridge (Inbound_Issuer_Indiv_Identifier) INCLUDE (Inbound_Business_Key);
+CREATE NONCLUSTERED INDEX IX_br_ex ON #bridge (Inbound_Exchange_Assigned_Enrollee_ID) INCLUDE (Inbound_Business_Key);
+CREATE NONCLUSTERED INDEX IX_br_pol ON #bridge (Inbound_Policy_ID) INCLUDE (Inbound_Business_Key);
+CREATE NONCLUSTERED INDEX IX_br_hc ON #bridge (Inbound_Health_Coverage_Policy_No) INCLUDE (Inbound_Business_Key);
 
-SELECT DISTINCT Business_Key
-INTO #c2026_entity
-FROM #c2026_bridge;
+IF OBJECT_ID('tempdb..#entity') IS NOT NULL DROP TABLE #entity;
 
-CREATE UNIQUE CLUSTERED INDEX CX_c2026_ent ON #c2026_entity (Business_Key);
+SELECT DISTINCT
+    Inbound_Business_Key,
+    Inbound_Issuer,
+    Inbound_Coverage_Year,
+    Canonical_Policy_Key,
+    Canonical_Enrollee_Key
+INTO #entity
+FROM #bridge;
 
-DECLARE @entities_2026 BIGINT = (SELECT COUNT(*) FROM #c2026_entity);
+CREATE UNIQUE CLUSTERED INDEX CX_entity ON #entity (Inbound_Business_Key);
 
+DECLARE @entities BIGINT = (SELECT COUNT(*) FROM #entity);
 SET @msg = CONCAT(
-    'STEP2 done in ', DATEDIFF(second, @t_phase, SYSDATETIME()),
-    's; raw_2026=', @raw_2026, '; entities_2026=', @entities_2026
+    'EXPORT2 raw=', @raw_2026, ' entities=', @entities,
+    ' elapsed_s=', DATEDIFF(second, @t0, SYSDATETIME())
 );
 RAISERROR(@msg, 10, 1) WITH NOWAIT;
 
-IF @raw_2026 <> @expected_2026_confirm_raw OR @entities_2026 <> @expected_2026_confirm_entities
+IF @raw_2026 <> @expected_2026_raw OR @entities <> @expected_2026_entities
 BEGIN
     RAISERROR(
-        '2026 CONFIRM CONTROL FLAG: raw=%I64d (exp %I64d), entities=%I64d (exp %I64d). Continuing.',
-        10, 1,
-        @raw_2026, @expected_2026_confirm_raw,
-        @entities_2026, @expected_2026_confirm_entities
+        'EXPORT2 FLAG: 2026 CONFIRM raw=%I64d (exp %I64d), entities=%I64d (exp %I64d). Continuing with observed.',
+        10, 1, @raw_2026, @expected_2026_raw, @entities, @expected_2026_entities
     );
 END;
 
-DROP TABLE #c2026_raw;
+RAISERROR('EXPORT2 STEP3: match to FFM (validated reverse semantics)', 10, 1) WITH NOWAIT;
 
-
--- =============================================================================
--- STEP 3 — Match 2026 CONFIRM entities -> FFM target
--- =============================================================================
-SET @t_phase = SYSDATETIME();
-RAISERROR('STEP3 start: match 2026 CONFIRM to FFM', 10, 1) WITH NOWAIT;
-
-IF OBJECT_ID('tempdb..#e2026_hits') IS NOT NULL DROP TABLE #e2026_hits;
+IF OBJECT_ID('tempdb..#eel_hits') IS NOT NULL DROP TABLE #eel_hits;
 
 ;WITH e_raw AS (
-    SELECT br.Business_Key, f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #c2026_bridge AS br
+    SELECT br.Inbound_Business_Key, f.FFM_Coverage_Year, f.FFM_Policy_ID, f.FFM_Enrollee_ID,
+           f.FFM_Issuer, f.FFM_Enrollment_Status, f.FFM_Enrollee_Status
+    FROM #bridge AS br
     INNER JOIN #ffm_target AS f ON f.FFM_Enrollee_ID = br.Inbound_Member_ID
     WHERE br.Inbound_Member_ID IS NOT NULL
-
     UNION
-
-    SELECT br.Business_Key, f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #c2026_bridge AS br
+    SELECT br.Inbound_Business_Key, f.FFM_Coverage_Year, f.FFM_Policy_ID, f.FFM_Enrollee_ID,
+           f.FFM_Issuer, f.FFM_Enrollment_Status, f.FFM_Enrollee_Status
+    FROM #bridge AS br
     INNER JOIN #ffm_target AS f ON f.FFM_Enrollee_ID = br.Inbound_Issuer_Indiv_Identifier
     WHERE br.Inbound_Issuer_Indiv_Identifier IS NOT NULL
-
     UNION
-
-    SELECT br.Business_Key, f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #c2026_bridge AS br
+    SELECT br.Inbound_Business_Key, f.FFM_Coverage_Year, f.FFM_Policy_ID, f.FFM_Enrollee_ID,
+           f.FFM_Issuer, f.FFM_Enrollment_Status, f.FFM_Enrollee_Status
+    FROM #bridge AS br
     INNER JOIN #ffm_target AS f ON f.FFM_Enrollee_ID = br.Inbound_Exchange_Assigned_Enrollee_ID
     WHERE br.Inbound_Exchange_Assigned_Enrollee_ID IS NOT NULL
 )
-SELECT DISTINCT Business_Key, FFM_Policy_ID, FFM_Enrollee_ID
-INTO #e2026_hits
+SELECT DISTINCT *
+INTO #eel_hits
 FROM e_raw;
 
-CREATE CLUSTERED INDEX CX_e2026 ON #e2026_hits (Business_Key, FFM_Policy_ID, FFM_Enrollee_ID);
+CREATE CLUSTERED INDEX CX_eel ON #eel_hits (Inbound_Business_Key, FFM_Policy_ID, FFM_Enrollee_ID);
 
-IF OBJECT_ID('tempdb..#p2026_hits') IS NOT NULL DROP TABLE #p2026_hits;
+IF OBJECT_ID('tempdb..#pol_hits') IS NOT NULL DROP TABLE #pol_hits;
 
 ;WITH p_raw AS (
-    SELECT br.Business_Key, f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #c2026_bridge AS br
+    SELECT br.Inbound_Business_Key, f.FFM_Coverage_Year, f.FFM_Policy_ID, f.FFM_Enrollee_ID,
+           f.FFM_Issuer, f.FFM_Enrollment_Status, f.FFM_Enrollee_Status
+    FROM #bridge AS br
     INNER JOIN #ffm_target AS f ON f.FFM_Policy_ID = br.Inbound_Policy_ID
     WHERE br.Inbound_Policy_ID IS NOT NULL
-
     UNION
-
-    SELECT br.Business_Key, f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #c2026_bridge AS br
+    SELECT br.Inbound_Business_Key, f.FFM_Coverage_Year, f.FFM_Policy_ID, f.FFM_Enrollee_ID,
+           f.FFM_Issuer, f.FFM_Enrollment_Status, f.FFM_Enrollee_Status
+    FROM #bridge AS br
     INNER JOIN #ffm_target AS f ON f.FFM_Policy_ID = br.Inbound_Health_Coverage_Policy_No
     WHERE br.Inbound_Health_Coverage_Policy_No IS NOT NULL
 )
-SELECT DISTINCT Business_Key, FFM_Policy_ID, FFM_Enrollee_ID
-INTO #p2026_hits
+SELECT DISTINCT *
+INTO #pol_hits
 FROM p_raw;
 
-CREATE CLUSTERED INDEX CX_p2026 ON #p2026_hits (Business_Key, FFM_Policy_ID, FFM_Enrollee_ID);
+CREATE CLUSTERED INDEX CX_pol ON #pol_hits (Inbound_Business_Key, FFM_Policy_ID, FFM_Enrollee_ID);
 
-IF OBJECT_ID('tempdb..#exact_2026_entity') IS NOT NULL DROP TABLE #exact_2026_entity;
+IF OBJECT_ID('tempdb..#exact_hits') IS NOT NULL DROP TABLE #exact_hits;
 
-SELECT DISTINCT
-    e.Business_Key,
-    e.FFM_Policy_ID,
-    e.FFM_Enrollee_ID
-INTO #exact_2026_entity
-FROM #e2026_hits AS e
-INNER JOIN #p2026_hits AS p
-    ON p.Business_Key = e.Business_Key
+SELECT DISTINCT e.Inbound_Business_Key
+INTO #exact_hits
+FROM #eel_hits AS e
+INNER JOIN #pol_hits AS p
+    ON p.Inbound_Business_Key = e.Inbound_Business_Key
    AND p.FFM_Policy_ID = e.FFM_Policy_ID
    AND p.FFM_Enrollee_ID = e.FFM_Enrollee_ID;
 
-CREATE CLUSTERED INDEX CX_x2026e ON #exact_2026_entity (Business_Key);
-CREATE NONCLUSTERED INDEX IX_x2026_ffm ON #exact_2026_entity (FFM_Policy_ID, FFM_Enrollee_ID);
+CREATE UNIQUE CLUSTERED INDEX CX_exact ON #exact_hits (Inbound_Business_Key);
 
-IF OBJECT_ID('tempdb..#c2026_class') IS NOT NULL DROP TABLE #c2026_class;
+/* One best FFM evidence row per entity for non-exact categories */
+IF OBJECT_ID('tempdb..#eel_only_best') IS NOT NULL DROP TABLE #eel_only_best;
+SELECT * INTO #eel_only_best FROM (
+    SELECT e.*,
+           ROW_NUMBER() OVER (
+               PARTITION BY e.Inbound_Business_Key
+               ORDER BY e.FFM_Policy_ID, e.FFM_Enrollee_ID
+           ) AS rn
+    FROM #eel_hits AS e
+    WHERE NOT EXISTS (SELECT 1 FROM #exact_hits x WHERE x.Inbound_Business_Key = e.Inbound_Business_Key)
+) z WHERE rn = 1;
 
-;WITH exact_ent AS (
-    SELECT DISTINCT Business_Key FROM #exact_2026_entity
-),
-eel_only AS (
-    SELECT DISTINCT e.Business_Key
-    FROM #e2026_hits AS e
-    WHERE NOT EXISTS (SELECT 1 FROM exact_ent x WHERE x.Business_Key = e.Business_Key)
-),
-pol_only AS (
-    SELECT DISTINCT p.Business_Key
-    FROM #p2026_hits AS p
-    WHERE NOT EXISTS (SELECT 1 FROM exact_ent x WHERE x.Business_Key = p.Business_Key)
-      AND NOT EXISTS (SELECT 1 FROM eel_only e WHERE e.Business_Key = p.Business_Key)
-)
+CREATE UNIQUE CLUSTERED INDEX CX_eel_only ON #eel_only_best (Inbound_Business_Key);
+
+IF OBJECT_ID('tempdb..#pol_only_best') IS NOT NULL DROP TABLE #pol_only_best;
+SELECT * INTO #pol_only_best FROM (
+    SELECT p.*,
+           ROW_NUMBER() OVER (
+               PARTITION BY p.Inbound_Business_Key
+               ORDER BY p.FFM_Policy_ID, p.FFM_Enrollee_ID
+           ) AS rn
+    FROM #pol_hits AS p
+    WHERE NOT EXISTS (SELECT 1 FROM #exact_hits x WHERE x.Inbound_Business_Key = p.Inbound_Business_Key)
+      AND NOT EXISTS (SELECT 1 FROM #eel_only_best e WHERE e.Inbound_Business_Key = p.Inbound_Business_Key)
+) z WHERE rn = 1;
+
+CREATE UNIQUE CLUSTERED INDEX CX_pol_only ON #pol_only_best (Inbound_Business_Key);
+
+/* Representative physical inbound row per entity (latest maint / id) for export display */
+IF OBJECT_ID('tempdb..#rep') IS NOT NULL DROP TABLE #rep;
+SELECT * INTO #rep FROM (
+    SELECT
+        b.*,
+        ROW_NUMBER() OVER (
+            PARTITION BY b.Inbound_Business_Key
+            ORDER BY
+                b.member_maint_effective_date DESC,
+                b.inbound_row_id DESC
+        ) AS rn
+    FROM #bridge AS b
+) z WHERE rn = 1;
+
+CREATE UNIQUE CLUSTERED INDEX CX_rep ON #rep (Inbound_Business_Key);
+
+IF OBJECT_ID('tempdb..#non_exact') IS NOT NULL DROP TABLE #non_exact;
+
 SELECT
-    ent.Business_Key,
     CASE
-        WHEN x.Business_Key IS NOT NULL THEN '2026_EXACT_POLICY_ENROLLEE'
-        WHEN eo.Business_Key IS NOT NULL THEN '2026_ENROLLEE_DIFFERENT_POLICY'
-        WHEN po.Business_Key IS NOT NULL THEN '2026_POLICY_DIFFERENT_ENROLLEE'
-        ELSE '2026_NOT_IN_TARGET'
-    END AS Entity_Class
-INTO #c2026_class
-FROM #c2026_entity AS ent
-LEFT JOIN exact_ent AS x ON x.Business_Key = ent.Business_Key
-LEFT JOIN eel_only AS eo ON eo.Business_Key = ent.Business_Key
-LEFT JOIN pol_only AS po ON po.Business_Key = ent.Business_Key;
+        WHEN eo.Inbound_Business_Key IS NOT NULL THEN 'ENROLLEE_IN_TARGET_DIFFERENT_POLICY'
+        WHEN po.Inbound_Business_Key IS NOT NULL THEN 'POLICY_IN_TARGET_DIFFERENT_ENROLLEE'
+        ELSE 'INBOUND_CONFIRM_NOT_IN_FFM_TARGET'
+    END AS Difference_Category,
+    CASE
+        WHEN eo.Inbound_Business_Key IS NOT NULL
+            THEN 'Enrollee ID found in 2026 FFM target; policy IDs differ'
+        WHEN po.Inbound_Business_Key IS NOT NULL
+            THEN 'Policy ID found in 2026 FFM target; enrollee IDs differ'
+        ELSE 'No enrollee or policy evidence in 2026 FFM Enrolled/Pending target'
+    END AS Match_Reason,
+    r.Inbound_Coverage_Year,
+    r.Inbound_Issuer,
+    r.Inbound_Policy_ID,
+    r.Inbound_Health_Coverage_Policy_No,
+    r.Inbound_Member_ID,
+    r.Inbound_Issuer_Indiv_Identifier,
+    r.Inbound_Exchange_Assigned_Enrollee_ID,
+    r.Inbound_Status,
+    r.member_maint_effective_date AS Member_Maint_Effective_Date,
+    r.benefit_effective_date AS Benefit_Effective_Date,
+    r.benefit_end_date AS Benefit_End_Date,
+    r.Inbound_Source_File AS Source_File,
+    COALESCE(eo.FFM_Coverage_Year, po.FFM_Coverage_Year) AS FFM_Coverage_Year,
+    COALESCE(eo.FFM_Issuer, po.FFM_Issuer) AS FFM_Issuer,
+    COALESCE(eo.FFM_Policy_ID, po.FFM_Policy_ID) AS FFM_Policy_ID,
+    COALESCE(eo.FFM_Enrollee_ID, po.FFM_Enrollee_ID) AS FFM_Enrollee_ID,
+    COALESCE(eo.FFM_Enrollment_Status, po.FFM_Enrollment_Status) AS FFM_Enrollment_Status,
+    COALESCE(eo.FFM_Enrollee_Status, po.FFM_Enrollee_Status) AS FFM_Enrollee_Status,
+    ent.Inbound_Business_Key
+INTO #non_exact
+FROM #entity AS ent
+INNER JOIN #rep AS r
+    ON r.Inbound_Business_Key = ent.Inbound_Business_Key
+LEFT JOIN #eel_only_best AS eo
+    ON eo.Inbound_Business_Key = ent.Inbound_Business_Key
+LEFT JOIN #pol_only_best AS po
+    ON po.Inbound_Business_Key = ent.Inbound_Business_Key
+WHERE NOT EXISTS (
+    SELECT 1 FROM #exact_hits x WHERE x.Inbound_Business_Key = ent.Inbound_Business_Key
+);
 
-CREATE UNIQUE CLUSTERED INDEX CX_c2026_class ON #c2026_class (Business_Key);
+CREATE CLUSTERED INDEX CX_non_exact ON #non_exact (Difference_Category, Inbound_Business_Key);
 
-DECLARE @c2026_exact BIGINT = (SELECT COUNT(*) FROM #c2026_class WHERE Entity_Class = '2026_EXACT_POLICY_ENROLLEE');
-DECLARE @c2026_eel BIGINT = (SELECT COUNT(*) FROM #c2026_class WHERE Entity_Class = '2026_ENROLLEE_DIFFERENT_POLICY');
-DECLARE @c2026_pol BIGINT = (SELECT COUNT(*) FROM #c2026_class WHERE Entity_Class = '2026_POLICY_DIFFERENT_ENROLLEE');
-DECLARE @c2026_nit BIGINT = (SELECT COUNT(*) FROM #c2026_class WHERE Entity_Class = '2026_NOT_IN_TARGET');
-
-IF OBJECT_ID('tempdb..#ffm_exact_2026') IS NOT NULL DROP TABLE #ffm_exact_2026;
-
-SELECT DISTINCT FFM_Policy_ID, FFM_Enrollee_ID
-INTO #ffm_exact_2026
-FROM #exact_2026_entity;
-
-CREATE UNIQUE CLUSTERED INDEX CX_ffm_x2026 ON #ffm_exact_2026 (FFM_Policy_ID, FFM_Enrollee_ID);
-
-DECLARE @ffm_exact_2026_pairs BIGINT = (SELECT COUNT(*) FROM #ffm_exact_2026);
+DECLARE @export_count BIGINT = (SELECT COUNT(*) FROM #non_exact);
+DECLARE @exact_excluded BIGINT = (SELECT COUNT(*) FROM #exact_hits);
+DECLARE @cat_eel BIGINT = (SELECT COUNT(*) FROM #non_exact WHERE Difference_Category = 'ENROLLEE_IN_TARGET_DIFFERENT_POLICY');
+DECLARE @cat_pol BIGINT = (SELECT COUNT(*) FROM #non_exact WHERE Difference_Category = 'POLICY_IN_TARGET_DIFFERENT_ENROLLEE');
+DECLARE @cat_nit BIGINT = (SELECT COUNT(*) FROM #non_exact WHERE Difference_Category = 'INBOUND_CONFIRM_NOT_IN_FFM_TARGET');
 
 SET @msg = CONCAT(
-    'STEP3 done in ', DATEDIFF(second, @t_phase, SYSDATETIME()),
-    's; ent_exact=', @c2026_exact,
-    '; eel_diff=', @c2026_eel,
-    '; pol_diff=', @c2026_pol,
-    '; not_in_target=', @c2026_nit,
-    '; ffm_pairs_exact_via_2026=', @ffm_exact_2026_pairs
+    'EXPORT2 non_exact=', @export_count,
+    ' exact_excluded=', @exact_excluded,
+    ' elapsed_s=', DATEDIFF(second, @t0, SYSDATETIME())
 );
 RAISERROR(@msg, 10, 1) WITH NOWAIT;
 
-DROP TABLE #c2026_bridge;
-DROP TABLE #e2026_hits;
-DROP TABLE #p2026_hits;
-
-
--- =============================================================================
--- STEP 4 — 2025 carry-forward EXACT only (FFM-first; no full 2025 load)
--- Established evidence semantics (NOT same-physical-row):
---   A) enrollee-hit set via 3 independent enrollee ID paths
---   B) policy-hit set via 2 independent policy ID paths
---   C) intersect at FFM Policy+Enrollee grain
--- Evidence may come from different physical 2025 CONFIRM rows.
--- =============================================================================
-RAISERROR('STEP4 start: 2025 exact carry-forward (FFM-first, split evidence)', 10, 1) WITH NOWAIT;
-
--- STEP4A — 2025 enrollee evidence -> FFM pairs (dedup immediately)
-SET @t_phase = SYSDATETIME();
-RAISERROR('STEP4A start: 2025 enrollee evidence', 10, 1) WITH NOWAIT;
-
-IF OBJECT_ID('tempdb..#ffm_eel_2025') IS NOT NULL DROP TABLE #ffm_eel_2025;
-
-;WITH eel_hit AS (
-    SELECT f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #ffm_target AS f
-    INNER JOIN dbo.inbound_automation AS ia
-        ON ia.coverage_year = 2025
-       AND UPPER(LTRIM(RTRIM(ia.enrolleeStatus))) = 'CONFIRM'
-       AND NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(100)))), '') = f.FFM_Enrollee_ID
-
-    UNION
-
-    SELECT f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #ffm_target AS f
-    INNER JOIN dbo.inbound_automation AS ia
-        ON ia.coverage_year = 2025
-       AND UPPER(LTRIM(RTRIM(ia.enrolleeStatus))) = 'CONFIRM'
-       AND NULLIF(LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(100)))), '') = f.FFM_Enrollee_ID
-
-    UNION
-
-    SELECT f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #ffm_target AS f
-    INNER JOIN dbo.inbound_automation AS ia
-        ON ia.coverage_year = 2025
-       AND UPPER(LTRIM(RTRIM(ia.enrolleeStatus))) = 'CONFIRM'
-       AND NULLIF(LTRIM(RTRIM(CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(100)))), '') = f.FFM_Enrollee_ID
-)
-SELECT DISTINCT FFM_Policy_ID, FFM_Enrollee_ID
-INTO #ffm_eel_2025
-FROM eel_hit;
-
-CREATE UNIQUE CLUSTERED INDEX CX_ffm_eel_2025
-    ON #ffm_eel_2025 (FFM_Policy_ID, FFM_Enrollee_ID);
-
-DECLARE @eel_2025_pairs BIGINT = (SELECT COUNT(*) FROM #ffm_eel_2025);
-
-SET @msg = CONCAT(
-    'STEP4A done in ', DATEDIFF(second, @t_phase, SYSDATETIME()),
-    's; ffm_pairs_with_2025_enrollee_evidence=', @eel_2025_pairs
-);
-RAISERROR(@msg, 10, 1) WITH NOWAIT;
-
--- STEP4B — 2025 policy evidence -> FFM pairs (dedup immediately)
-SET @t_phase = SYSDATETIME();
-RAISERROR('STEP4B start: 2025 policy evidence', 10, 1) WITH NOWAIT;
-
-IF OBJECT_ID('tempdb..#ffm_pol_2025') IS NOT NULL DROP TABLE #ffm_pol_2025;
-
-;WITH pol_hit AS (
-    SELECT f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #ffm_target AS f
-    INNER JOIN dbo.inbound_automation AS ia
-        ON ia.coverage_year = 2025
-       AND UPPER(LTRIM(RTRIM(ia.enrolleeStatus))) = 'CONFIRM'
-       AND NULLIF(LTRIM(RTRIM(CAST(ia.policy_id AS VARCHAR(100)))), '') = f.FFM_Policy_ID
-
-    UNION
-
-    SELECT f.FFM_Policy_ID, f.FFM_Enrollee_ID
-    FROM #ffm_target AS f
-    INNER JOIN dbo.inbound_automation AS ia
-        ON ia.coverage_year = 2025
-       AND UPPER(LTRIM(RTRIM(ia.enrolleeStatus))) = 'CONFIRM'
-       AND NULLIF(LTRIM(RTRIM(CAST(ia.health_coverage_policy_no AS VARCHAR(100)))), '') = f.FFM_Policy_ID
-)
-SELECT DISTINCT FFM_Policy_ID, FFM_Enrollee_ID
-INTO #ffm_pol_2025
-FROM pol_hit;
-
-CREATE UNIQUE CLUSTERED INDEX CX_ffm_pol_2025
-    ON #ffm_pol_2025 (FFM_Policy_ID, FFM_Enrollee_ID);
-
-DECLARE @pol_2025_pairs BIGINT = (SELECT COUNT(*) FROM #ffm_pol_2025);
-
-SET @msg = CONCAT(
-    'STEP4B done in ', DATEDIFF(second, @t_phase, SYSDATETIME()),
-    's; ffm_pairs_with_2025_policy_evidence=', @pol_2025_pairs
-);
-RAISERROR(@msg, 10, 1) WITH NOWAIT;
-
--- STEP4C — Intersect enrollee + policy evidence at same FFM pair
-SET @t_phase = SYSDATETIME();
-RAISERROR('STEP4C start: intersect exact FFM pairs', 10, 1) WITH NOWAIT;
-
-IF OBJECT_ID('tempdb..#ffm_exact_2025') IS NOT NULL DROP TABLE #ffm_exact_2025;
-
-SELECT e.FFM_Policy_ID, e.FFM_Enrollee_ID
-INTO #ffm_exact_2025
-FROM #ffm_eel_2025 AS e
-INNER JOIN #ffm_pol_2025 AS p
-    ON p.FFM_Policy_ID = e.FFM_Policy_ID
-   AND p.FFM_Enrollee_ID = e.FFM_Enrollee_ID;
-
-CREATE UNIQUE CLUSTERED INDEX CX_ffm_x2025
-    ON #ffm_exact_2025 (FFM_Policy_ID, FFM_Enrollee_ID);
-
-DECLARE @ffm_exact_2025_pairs BIGINT = (SELECT COUNT(*) FROM #ffm_exact_2025);
-
-SET @msg = CONCAT(
-    'STEP4C done in ', DATEDIFF(second, @t_phase, SYSDATETIME()),
-    's; ffm_pairs_exact_via_2025=', @ffm_exact_2025_pairs
-);
-RAISERROR(@msg, 10, 1) WITH NOWAIT;
-
-/* Hit sets no longer needed after intersect */
-DROP TABLE #ffm_eel_2025;
-DROP TABLE #ffm_pol_2025;
-
-
--- =============================================================================
--- STEP 5 — Prevent double-count of exact FFM pairs; focused summary
--- =============================================================================
-SET @t_phase = SYSDATETIME();
-RAISERROR('STEP5 start: focused mutually exclusive summary', 10, 1) WITH NOWAIT;
-
-DECLARE @exact_2025_only BIGINT = (
-    SELECT COUNT(*)
-    FROM #ffm_exact_2025 AS a
-    WHERE NOT EXISTS (
-        SELECT 1 FROM #ffm_exact_2026 AS b
-        WHERE b.FFM_Policy_ID = a.FFM_Policy_ID
-          AND b.FFM_Enrollee_ID = a.FFM_Enrollee_ID
-    )
-);
-
-DECLARE @exact_2026_only BIGINT = (
-    SELECT COUNT(*)
-    FROM #ffm_exact_2026 AS a
-    WHERE NOT EXISTS (
-        SELECT 1 FROM #ffm_exact_2025 AS b
-        WHERE b.FFM_Policy_ID = a.FFM_Policy_ID
-          AND b.FFM_Enrollee_ID = a.FFM_Enrollee_ID
-    )
-);
-
-DECLARE @exact_overlap BIGINT = (
-    SELECT COUNT(*)
-    FROM #ffm_exact_2025 AS a
-    INNER JOIN #ffm_exact_2026 AS b
-        ON b.FFM_Policy_ID = a.FFM_Policy_ID
-       AND b.FFM_Enrollee_ID = a.FFM_Enrollee_ID
-);
-
-DECLARE @focused_total BIGINT =
-      @exact_2025_only
-    + @exact_2026_only
-    + @exact_overlap
-    + @c2026_eel
-    + @c2026_pol
-    + @c2026_nit;
-
-SET @msg = CONCAT(
-    'STEP5 done in ', DATEDIFF(second, @t_phase, SYSDATETIME()),
-    's; focused_total=', @focused_total,
-    '; total_elapsed_s=', DATEDIFF(second, @t0, SYSDATETIME())
-);
-RAISERROR(@msg, 10, 1) WITH NOWAIT;
-
-
--- =============================================================================
--- RESULT 1 — 2026 entity classification counts (validation; not forced)
--- =============================================================================
+-- CONTROL
 SELECT
-    Entity_Class AS Population_Category,
-    COUNT(*) AS Entity_Count,
-    CAST(100.0 * COUNT(*) / NULLIF(@entities_2026, 0) AS DECIMAL(10, 4)) AS Percent_of_2026_Entities
-FROM #c2026_class
-GROUP BY Entity_Class;
+    @entities AS confirm_2026_entities,
+    @exact_excluded AS exact_excluded,
+    @export_count AS non_exact_export_count,
+    @cat_eel AS enrollee_different_policy_count,
+    @cat_pol AS policy_different_enrollee_count,
+    @cat_nit AS not_in_ffm_target_count,
+    CASE
+        WHEN (@exact_excluded + @export_count) = @entities THEN 'PASS_PARTITION'
+        ELSE 'FLAG_PARTITION_DRIFT'
+    END AS partition_control,
+    CASE
+        WHEN @export_count = (@cat_eel + @cat_pol + @cat_nit) THEN 'PASS_CATEGORY_SUM'
+        ELSE 'FAIL_CATEGORY_SUM'
+    END AS category_control;
 
-
--- =============================================================================
--- RESULT 2 — Focused mutually exclusive summary
--- Exact buckets = distinct FFM Policy+Enrollee pairs
--- Non-exact buckets = distinct 2026 inbound business entities
--- =============================================================================
+-- EXPORT ROWS
 SELECT
-    Population_Category,
-    Count_Value AS [Count],
-    CAST(100.0 * Count_Value / NULLIF(@focused_total, 0) AS DECIMAL(10, 4)) AS Percent_of_Focused_Total
-FROM (VALUES
-    ('2025_EXACT_CARRY_FORWARD_ONLY', @exact_2025_only),
-    ('2026_EXACT', @exact_2026_only),
-    ('2025_AND_2026_EXACT_OVERLAP', @exact_overlap),
-    ('2026_ENROLLEE_DIFFERENT_POLICY', @c2026_eel),
-    ('2026_POLICY_DIFFERENT_ENROLLEE', @c2026_pol),
-    ('2026_NOT_IN_TARGET', @c2026_nit)
-) AS v(Population_Category, Count_Value);
+    Difference_Category,
+    Inbound_Coverage_Year,
+    Inbound_Issuer,
+    Inbound_Policy_ID,
+    Inbound_Health_Coverage_Policy_No,
+    Inbound_Member_ID,
+    Inbound_Issuer_Indiv_Identifier,
+    Inbound_Exchange_Assigned_Enrollee_ID,
+    Inbound_Status,
+    Member_Maint_Effective_Date,
+    Benefit_Effective_Date,
+    Benefit_End_Date,
+    Source_File,
+    FFM_Coverage_Year,
+    FFM_Issuer,
+    FFM_Policy_ID,
+    FFM_Enrollee_ID,
+    FFM_Enrollment_Status,
+    FFM_Enrollee_Status,
+    Match_Reason
+FROM #non_exact;
 
-
--- =============================================================================
--- RESULT 3 — Final controls vs FFM 960,531 (signed difference only)
--- =============================================================================
-SELECT
-    metric,
-    value_count,
-    note
-FROM (VALUES
-    ('ffm_target_enrolled', @ffm_enrolled, 'control 945,039'),
-    ('ffm_target_pending', @ffm_pending, 'control 15,492'),
-    ('ffm_target_total', @ffm_total, 'control 960,531'),
-    ('inbound_2026_confirm_raw', @raw_2026, 'control 551,208 if unchanged'),
-    ('inbound_2026_confirm_entities', @entities_2026, 'control 501,369 if unchanged'),
-    ('ffm_pairs_exact_via_2025_confirm', @ffm_exact_2025_pairs, 'observed; not forced'),
-    ('ffm_pairs_exact_via_2026_confirm', @ffm_exact_2026_pairs, 'observed; not forced'),
-    ('final_focused_distinct_population', @focused_total,
-        '2025_only_exact + 2026_only_exact + overlap + 2026 non-exact entities'),
-    ('numeric_difference_focused_minus_FFM', (@focused_total - @ffm_total),
-        'Signed difference only — not labeled missing'),
-    ('numeric_difference_FFM_minus_focused', (@ffm_total - @focused_total),
-        'Signed difference only — not labeled missing')
-) AS v(metric, value_count, note);
-
-SET @msg = CONCAT('ALL DONE; total_elapsed_s=', DATEDIFF(second, @t0, SYSDATETIME()));
-RAISERROR(@msg, 10, 1) WITH NOWAIT;
+RAISERROR('EXPORT2 DONE', 10, 1) WITH NOWAIT;
