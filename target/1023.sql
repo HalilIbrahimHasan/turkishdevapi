@@ -1,626 +1,1080 @@
 -- =============================================================================
--- PHASE 1 — DIRECT AUTO-RENEWAL INDICATOR DISCOVERY
+-- PHASE 2 — HISTORICAL LINEAGE OF VALIDATED 2026 NO_INBOUND POPULATION
 -- =============================================================================
 -- Purpose:
---   Search Azure SQL metadata for a direct, authoritative Auto-Renewal field
---   before any historical-lineage inference is attempted.
+--   Starting strictly from the validated 109,776
+--   NO_INBOUND_ENROLLEE_EVIDENCE Policy + Enrollee records, profile same-
+--   enrollee enrollment history in Coverage Year 2025 and then 2024.
 --
--- Repository finding before execution:
---   No executable SQL/Python classification for Auto-Renewal exists locally.
---   RENP/AUTORENEW appears only in Companion Guide documentation.
+-- This script does NOT:
+--   * assign AUTO_RENEWAL or AUTO_RENEWAL_CANDIDATE
+--   * apply a "good standing" status rule
+--   * use the business-reported 75,390 as a target
+--   * use RCNI
+--   * modify permanent tables
 --
--- Safety:
---   READ ONLY. Temp tables only. No permanent writes. No RCNI data access.
---   This script does NOT classify any record as Auto-Renewal.
---   This script does NOT rebuild or alter the validated 109,776 population.
+-- Validated starting chain:
+--   dbo.Enrollments_TEST
+--     -> #pop_2026 (five-field latest-row dedup)
+--     -> #ffm_target (2026 Enrollment Status Enrolled/Pending)
+--     -> #no_inbound_export (all-history, three independent identifier checks)
+--
+-- Grain:
+--   2026 Coverage Year + Policy ID + Enrollee ID
 -- =============================================================================
 
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
+DECLARE @coverage_year INT = 2026;
+DECLARE @expected_complete_2026 BIGINT = 2263972;
+DECLARE @expected_ffm_target BIGINT = 960531;
+DECLARE @expected_no_inbound BIGINT = 109776;
+
+DECLARE @t0 DATETIME2 = SYSDATETIME();
+DECLARE @msg NVARCHAR(500);
+
 
 -- =============================================================================
--- 1) Candidate columns in tables/views
+-- A1 — VALIDATED COMPLETE 2026 DEDUPLICATED POPULATION
+-- Exact five-field ordering from:
+--   enrollments_2026_complete_population_diagnostic.sql
+-- Additional projected fields do not participate in membership or ordering.
 -- =============================================================================
-IF OBJECT_ID('tempdb..#candidate_columns') IS NOT NULL
-    DROP TABLE #candidate_columns;
+RAISERROR('PHASE2 A1: build complete deduplicated 2026 population', 10, 1) WITH NOWAIT;
 
-;WITH object_inventory AS (
-    SELECT
-        o.object_id,
-        s.name AS schema_name,
-        o.name AS object_name,
-        CASE o.type
-            WHEN 'U' THEN 'TABLE'
-            WHEN 'V' THEN 'VIEW'
-            ELSE o.type_desc
-        END AS object_type
-    FROM sys.objects AS o
-    INNER JOIN sys.schemas AS s
-        ON s.schema_id = o.schema_id
-    WHERE o.type IN ('U', 'V')
-      AND o.is_ms_shipped = 0
-),
-column_inventory AS (
-    SELECT
-        oi.object_id,
-        oi.schema_name,
-        oi.object_name,
-        oi.object_type,
-        c.column_id,
-        c.name AS column_name,
-        t.name AS data_type,
-        c.max_length,
-        c.precision,
-        c.scale,
-        c.is_nullable,
-        LOWER(
-            REPLACE(
-                REPLACE(
-                    REPLACE(c.name, '_', ''),
-                    ' ',
-                    ''
-                ),
-                '-',
-                ''
-            )
-        ) AS normalized_column_name
-    FROM object_inventory AS oi
-    INNER JOIN sys.columns AS c
-        ON c.object_id = oi.object_id
-    INNER JOIN sys.types AS t
-        ON t.user_type_id = c.user_type_id
-)
+IF OBJECT_ID('tempdb..#pop_2026') IS NOT NULL DROP TABLE #pop_2026;
+
 SELECT
-    object_id,
-    schema_name,
-    object_name,
-    object_type,
-    column_id,
-    column_name,
-    data_type,
-    max_length,
-    precision,
-    scale,
-    is_nullable,
-    normalized_column_name,
-    CAST(
-        CASE
-            WHEN normalized_column_name LIKE '%autorenew%'
-                THEN 'AUTO_RENEWAL_NAME'
-            WHEN normalized_column_name LIKE '%passiverenew%'
-                THEN 'PASSIVE_RENEWAL_NAME'
-            WHEN normalized_column_name LIKE '%reenroll%'
-                THEN 'REENROLLMENT_NAME'
-            WHEN normalized_column_name LIKE '%renewal%'
-              OR normalized_column_name LIKE '%renew%'
-                THEN 'RENEWAL_NAME'
-            WHEN normalized_column_name LIKE '%enrollmentorigin%'
-              OR normalized_column_name LIKE '%origintype%'
-              OR normalized_column_name LIKE '%origin%'
-                THEN 'ORIGIN_NAME'
-            ELSE 'OTHER'
-        END
-        AS VARCHAR(40)
-    ) AS candidate_reason
-INTO #candidate_columns
-FROM column_inventory
-WHERE normalized_column_name LIKE '%autorenew%'
-   OR normalized_column_name LIKE '%passiverenew%'
-   OR normalized_column_name LIKE '%reenroll%'
-   OR normalized_column_name LIKE '%renewal%'
-   OR normalized_column_name LIKE '%renew%'
-   OR normalized_column_name LIKE '%enrollmentorigin%'
-   OR normalized_column_name LIKE '%origintype%'
-   OR normalized_column_name LIKE '%origin%';
+    e.coverage_year,
+    e.hios_issuer_id,
+    e.enrollment_id,
+    e.enrollee_id,
+    e.enrollment_status_description,
+    e.enrollee_status_description,
+    e.benefit_effective_date,
+    e.benefit_end_date,
+    e.enrollment_create_date,
+    e.enrollment_last_update_date,
+    e.enrollee_create_date,
+    e.enrollee_last_update_date,
+    e.person_type,
+    e.relationship_type,
+    e.net_premium_amt,
+    e.physical_row_count_for_key
+INTO #pop_2026
+FROM (
+    SELECT
+        e.coverage_year,
+        e.hios_issuer_id,
+        e.enrollment_id,
+        e.enrollee_id,
+        e.enrollment_status_description,
+        e.enrollee_status_description,
+        e.benefit_effective_date,
+        e.benefit_end_date,
+        e.enrollment_create_date,
+        e.enrollment_last_update_date,
+        e.enrollee_create_date,
+        e.enrollee_last_update_date,
+        e.person_type,
+        e.relationship_type,
+        e.net_premium_amt,
+        COUNT(*) OVER (
+            PARTITION BY e.coverage_year, e.enrollment_id, e.enrollee_id
+        ) AS physical_row_count_for_key,
+        ROW_NUMBER() OVER (
+            PARTITION BY e.coverage_year, e.enrollment_id, e.enrollee_id
+            ORDER BY
+                e.enrollment_last_update_date DESC,
+                e.enrollee_last_update_date DESC,
+                e.enrollment_create_date DESC,
+                e.enrollee_create_date DESC,
+                e.benefit_effective_date DESC
+        ) AS _rn
+    FROM dbo.Enrollments_TEST AS e
+    WHERE e.coverage_year = @coverage_year
+) AS e
+WHERE e._rn = 1;
 
-CREATE CLUSTERED INDEX CX_candidate_columns
-    ON #candidate_columns (
-        candidate_reason,
-        schema_name,
-        object_name,
-        column_id
+CREATE UNIQUE CLUSTERED INDEX CX_pop_2026
+    ON #pop_2026 (coverage_year, enrollment_id, enrollee_id);
+
+CREATE NONCLUSTERED INDEX IX_pop_2026_status
+    ON #pop_2026 (enrollment_status_description)
+    INCLUDE (
+        hios_issuer_id,
+        enrollee_status_description,
+        person_type,
+        relationship_type,
+        net_premium_amt
+    );
+
+DECLARE @complete_2026_count BIGINT = (
+    SELECT COUNT_BIG(*) FROM #pop_2026
+);
+
+IF @complete_2026_count <> @expected_complete_2026
+BEGIN
+    RAISERROR(
+        'STOP A1: COMPLETE_2026_DISTINCT_PAIRS=%I64d; expected %I64d.',
+        16, 1,
+        @complete_2026_count,
+        @expected_complete_2026
+    );
+    RETURN;
+END;
+
+
+-- =============================================================================
+-- A2 — VALIDATED 2026 ENROLLED/PENDING TARGET
+-- Filter enrollment status only, after complete-population deduplication.
+-- =============================================================================
+RAISERROR('PHASE2 A2: build validated 2026 Enrolled/Pending target', 10, 1) WITH NOWAIT;
+
+IF OBJECT_ID('tempdb..#ffm_target') IS NOT NULL DROP TABLE #ffm_target;
+
+SELECT
+    p.coverage_year AS FFM_Coverage_Year,
+    CAST(p.hios_issuer_id AS VARCHAR(20)) AS FFM_Issuer,
+    CAST(p.enrollment_id AS VARCHAR(100)) AS FFM_Policy_ID,
+    CAST(p.enrollee_id AS VARCHAR(100)) AS FFM_Enrollee_ID,
+    p.enrollment_status_description AS FFM_Enrollment_Status,
+    p.enrollee_status_description AS FFM_Enrollee_Status,
+    p.benefit_effective_date AS FFM_Benefit_Effective_Date,
+    p.benefit_end_date AS FFM_Benefit_End_Date,
+    p.enrollment_create_date AS FFM_Enrollment_Create_Date,
+    p.enrollment_last_update_date AS FFM_Enrollment_Last_Update_Date,
+    p.enrollee_create_date AS FFM_Enrollee_Create_Date,
+    p.enrollee_last_update_date AS FFM_Enrollee_Last_Update_Date,
+    p.person_type AS FFM_Person_Type,
+    p.relationship_type AS FFM_Relationship_Type,
+    CAST(p.net_premium_amt AS DECIMAL(38, 10)) AS FFM_Net_Premium_Amount
+INTO #ffm_target
+FROM #pop_2026 AS p
+WHERE UPPER(LTRIM(RTRIM(p.enrollment_status_description)))
+      IN ('ENROLLED', 'PENDING');
+
+CREATE UNIQUE CLUSTERED INDEX CX_ffm_target
+    ON #ffm_target (
+        FFM_Coverage_Year,
+        FFM_Policy_ID,
+        FFM_Enrollee_ID
+    );
+
+CREATE NONCLUSTERED INDEX IX_ffm_target_enrollee
+    ON #ffm_target (FFM_Enrollee_ID)
+    INCLUDE (
+        FFM_Issuer,
+        FFM_Policy_ID,
+        FFM_Enrollment_Status,
+        FFM_Enrollee_Status
+    );
+
+DECLARE @ffm_target_count BIGINT = (
+    SELECT COUNT_BIG(*) FROM #ffm_target
+);
+
+IF @ffm_target_count <> @expected_ffm_target
+BEGIN
+    RAISERROR(
+        'STOP A2: FFM_TARGET_COUNT=%I64d; expected %I64d.',
+        16, 1,
+        @ffm_target_count,
+        @expected_ffm_target
+    );
+    RETURN;
+END;
+
+
+-- =============================================================================
+-- B1 — ALL-HISTORY INBOUND ENROLLEE IDENTIFIERS
+-- No coverage-year or inbound-status restriction.
+-- =============================================================================
+RAISERROR('PHASE2 B1: stage all-history inbound enrollee identifiers', 10, 1) WITH NOWAIT;
+
+IF OBJECT_ID('tempdb..#inbound_identifiers') IS NOT NULL
+    DROP TABLE #inbound_identifiers;
+
+SELECT
+    ia.id AS inbound_row_id,
+    NULLIF(LTRIM(RTRIM(CAST(ia.member_id AS VARCHAR(100)))), '')
+        AS Inbound_Member_ID,
+    NULLIF(LTRIM(RTRIM(CAST(ia.issuer_indiv_identifier AS VARCHAR(100)))), '')
+        AS Inbound_Issuer_Indiv_Identifier,
+    NULLIF(LTRIM(RTRIM(CAST(ia.exchg_assigned_enrollee_id AS VARCHAR(100)))), '')
+        AS Inbound_Exchange_Assigned_Enrollee_ID
+INTO #inbound_identifiers
+FROM dbo.inbound_automation AS ia
+WHERE NULLIF(LTRIM(RTRIM(ia.member_id)), '') IS NOT NULL
+   OR NULLIF(LTRIM(RTRIM(ia.issuer_indiv_identifier)), '') IS NOT NULL
+   OR NULLIF(LTRIM(RTRIM(ia.exchg_assigned_enrollee_id)), '') IS NOT NULL;
+
+CREATE UNIQUE CLUSTERED INDEX CX_inbound_identifiers
+    ON #inbound_identifiers (inbound_row_id);
+
+CREATE NONCLUSTERED INDEX IX_inbound_member
+    ON #inbound_identifiers (Inbound_Member_ID);
+
+CREATE NONCLUSTERED INDEX IX_inbound_issuer_indiv
+    ON #inbound_identifiers (Inbound_Issuer_Indiv_Identifier);
+
+CREATE NONCLUSTERED INDEX IX_inbound_exchange
+    ON #inbound_identifiers (Inbound_Exchange_Assigned_Enrollee_ID);
+
+
+-- =============================================================================
+-- B2 — VALIDATED 109,776 NO_INBOUND POPULATION
+-- =============================================================================
+RAISERROR('PHASE2 B2: build validated NO_INBOUND population', 10, 1) WITH NOWAIT;
+
+IF OBJECT_ID('tempdb..#no_inbound_export') IS NOT NULL
+    DROP TABLE #no_inbound_export;
+
+SELECT
+    t.*,
+    CAST('NO_INBOUND_ENROLLEE_EVIDENCE' AS VARCHAR(40)) AS Match_Level
+INTO #no_inbound_export
+FROM #ffm_target AS t
+WHERE NOT EXISTS (
+          SELECT 1
+          FROM #inbound_identifiers AS i
+          WHERE i.Inbound_Member_ID = t.FFM_Enrollee_ID
+      )
+  AND NOT EXISTS (
+          SELECT 1
+          FROM #inbound_identifiers AS i
+          WHERE i.Inbound_Issuer_Indiv_Identifier = t.FFM_Enrollee_ID
+      )
+  AND NOT EXISTS (
+          SELECT 1
+          FROM #inbound_identifiers AS i
+          WHERE i.Inbound_Exchange_Assigned_Enrollee_ID = t.FFM_Enrollee_ID
+      );
+
+CREATE UNIQUE CLUSTERED INDEX CX_no_inbound_export
+    ON #no_inbound_export (
+        FFM_Coverage_Year,
+        FFM_Policy_ID,
+        FFM_Enrollee_ID
+    );
+
+CREATE NONCLUSTERED INDEX IX_no_inbound_enrollee
+    ON #no_inbound_export (FFM_Enrollee_ID)
+    INCLUDE (
+        FFM_Coverage_Year,
+        FFM_Policy_ID,
+        FFM_Issuer
+    );
+
+DECLARE @no_inbound_count BIGINT = (
+    SELECT COUNT_BIG(*) FROM #no_inbound_export
+);
+
+IF @no_inbound_count <> @expected_no_inbound
+BEGIN
+    RAISERROR(
+        'STOP B2: NO_INBOUND_COUNT=%I64d; expected %I64d.',
+        16, 1,
+        @no_inbound_count,
+        @expected_no_inbound
+    );
+    RETURN;
+END;
+
+
+-- =============================================================================
+-- C1 — DEDUPLICATED 2025/2024 ENROLLMENT HISTORY
+-- One row per historical coverage year + Policy ID + Enrollee ID.
+-- Uses the same five-field latest-row ordering as the validated 2026 population.
+-- No historical status filter is applied.
+-- =============================================================================
+RAISERROR('PHASE2 C1: build deduplicated 2025/2024 enrollment history', 10, 1) WITH NOWAIT;
+
+IF OBJECT_ID('tempdb..#prior_history') IS NOT NULL DROP TABLE #prior_history;
+
+SELECT
+    e.coverage_year AS Historical_Coverage_Year,
+    CAST(e.hios_issuer_id AS VARCHAR(20)) AS Historical_Issuer,
+    CAST(e.enrollment_id AS VARCHAR(100)) AS Historical_Policy_ID,
+    CAST(e.enrollee_id AS VARCHAR(100)) AS Historical_Enrollee_ID,
+    e.enrollment_status_description AS Historical_Enrollment_Status,
+    e.enrollee_status_description AS Historical_Enrollee_Status,
+    e.benefit_effective_date AS Historical_Benefit_Effective_Date,
+    e.benefit_end_date AS Historical_Benefit_End_Date,
+    e.enrollment_create_date AS Historical_Enrollment_Create_Date,
+    e.enrollment_last_update_date AS Historical_Enrollment_Last_Update_Date,
+    e.enrollee_create_date AS Historical_Enrollee_Create_Date,
+    e.enrollee_last_update_date AS Historical_Enrollee_Last_Update_Date,
+    e.person_type AS Historical_Person_Type,
+    e.relationship_type AS Historical_Relationship_Type,
+    CAST(e.net_premium_amt AS DECIMAL(38, 10))
+        AS Historical_Net_Premium_Amount,
+    e.physical_row_count_for_key AS Historical_Physical_Row_Count_For_Key
+INTO #prior_history
+FROM (
+    SELECT
+        e.coverage_year,
+        e.hios_issuer_id,
+        e.enrollment_id,
+        e.enrollee_id,
+        e.enrollment_status_description,
+        e.enrollee_status_description,
+        e.benefit_effective_date,
+        e.benefit_end_date,
+        e.enrollment_create_date,
+        e.enrollment_last_update_date,
+        e.enrollee_create_date,
+        e.enrollee_last_update_date,
+        e.person_type,
+        e.relationship_type,
+        e.net_premium_amt,
+        COUNT(*) OVER (
+            PARTITION BY e.coverage_year, e.enrollment_id, e.enrollee_id
+        ) AS physical_row_count_for_key,
+        ROW_NUMBER() OVER (
+            PARTITION BY e.coverage_year, e.enrollment_id, e.enrollee_id
+            ORDER BY
+                e.enrollment_last_update_date DESC,
+                e.enrollee_last_update_date DESC,
+                e.enrollment_create_date DESC,
+                e.enrollee_create_date DESC,
+                e.benefit_effective_date DESC
+        ) AS _rn
+    FROM dbo.Enrollments_TEST AS e
+    INNER JOIN (
+        SELECT DISTINCT FFM_Enrollee_ID
+        FROM #no_inbound_export
+    ) AS n
+        ON n.FFM_Enrollee_ID = CAST(e.enrollee_id AS VARCHAR(100))
+    WHERE e.coverage_year IN (2024, 2025)
+) AS e
+WHERE e._rn = 1;
+
+CREATE UNIQUE CLUSTERED INDEX CX_prior_history
+    ON #prior_history (
+        Historical_Coverage_Year,
+        Historical_Policy_ID,
+        Historical_Enrollee_ID
+    );
+
+CREATE NONCLUSTERED INDEX IX_prior_history_enrollee_year
+    ON #prior_history (
+        Historical_Enrollee_ID,
+        Historical_Coverage_Year
+    )
+    INCLUDE (
+        Historical_Issuer,
+        Historical_Policy_ID,
+        Historical_Enrollment_Status,
+        Historical_Enrollee_Status,
+        Historical_Benefit_Effective_Date,
+        Historical_Benefit_End_Date,
+        Historical_Enrollment_Create_Date,
+        Historical_Enrollment_Last_Update_Date,
+        Historical_Enrollee_Create_Date,
+        Historical_Enrollee_Last_Update_Date,
+        Historical_Person_Type,
+        Historical_Relationship_Type,
+        Historical_Net_Premium_Amount
     );
 
 
 -- =============================================================================
--- 2) Candidate-object joinability inventory
+-- C2 — AGGREGATE 2025 EVIDENCE AT THE VALIDATED 2026 BUSINESS GRAIN
 -- =============================================================================
-IF OBJECT_ID('tempdb..#candidate_objects') IS NOT NULL
-    DROP TABLE #candidate_objects;
+IF OBJECT_ID('tempdb..#history_2025_agg') IS NOT NULL
+    DROP TABLE #history_2025_agg;
 
-;WITH candidate_object_ids AS (
-    SELECT DISTINCT
-        object_id,
-        schema_name,
-        object_name,
-        object_type
-    FROM #candidate_columns
-),
-all_columns AS (
+SELECT
+    n.FFM_Coverage_Year,
+    n.FFM_Policy_ID,
+    n.FFM_Enrollee_ID,
+    COUNT_BIG(h.Historical_Enrollee_ID) AS History_2025_Row_Count,
+    COUNT(DISTINCT h.Historical_Policy_ID)
+        AS History_2025_Distinct_Policy_Count,
+    COUNT(DISTINCT h.Historical_Issuer)
+        AS History_2025_Distinct_Issuer_Count,
+    MAX(CASE
+            WHEN h.Historical_Issuer = n.FFM_Issuer
+             AND h.Historical_Policy_ID = n.FFM_Policy_ID
+                THEN 1 ELSE 0
+        END) AS Has_2025_Same_Issuer_Same_Policy,
+    MAX(CASE
+            WHEN h.Historical_Issuer = n.FFM_Issuer
+             AND h.Historical_Policy_ID <> n.FFM_Policy_ID
+                THEN 1 ELSE 0
+        END) AS Has_2025_Same_Issuer_Different_Policy,
+    MAX(CASE
+            WHEN h.Historical_Issuer <> n.FFM_Issuer
+                THEN 1 ELSE 0
+        END) AS Has_2025_Different_Issuer,
+    MAX(CASE
+            WHEN h.Historical_Enrollee_ID IS NOT NULL
+             AND (
+                    h.Historical_Issuer IS NULL
+                 OR h.Historical_Policy_ID IS NULL
+             )
+                THEN 1 ELSE 0
+        END) AS Has_2025_Incomplete_Key
+INTO #history_2025_agg
+FROM #no_inbound_export AS n
+LEFT JOIN #prior_history AS h
+    ON h.Historical_Coverage_Year = 2025
+   AND h.Historical_Enrollee_ID = n.FFM_Enrollee_ID
+GROUP BY
+    n.FFM_Coverage_Year,
+    n.FFM_Policy_ID,
+    n.FFM_Enrollee_ID;
+
+CREATE UNIQUE CLUSTERED INDEX CX_history_2025_agg
+    ON #history_2025_agg (
+        FFM_Coverage_Year,
+        FFM_Policy_ID,
+        FFM_Enrollee_ID
+    );
+
+
+-- =============================================================================
+-- C3 — AGGREGATE 2024 EVIDENCE AT THE VALIDATED 2026 BUSINESS GRAIN
+-- =============================================================================
+IF OBJECT_ID('tempdb..#history_2024_agg') IS NOT NULL
+    DROP TABLE #history_2024_agg;
+
+SELECT
+    n.FFM_Coverage_Year,
+    n.FFM_Policy_ID,
+    n.FFM_Enrollee_ID,
+    COUNT_BIG(h.Historical_Enrollee_ID) AS History_2024_Row_Count,
+    COUNT(DISTINCT h.Historical_Policy_ID)
+        AS History_2024_Distinct_Policy_Count,
+    COUNT(DISTINCT h.Historical_Issuer)
+        AS History_2024_Distinct_Issuer_Count,
+    MAX(CASE
+            WHEN h.Historical_Issuer = n.FFM_Issuer
+                THEN 1 ELSE 0
+        END) AS Has_2024_Same_Issuer,
+    MAX(CASE
+            WHEN h.Historical_Policy_ID = n.FFM_Policy_ID
+                THEN 1 ELSE 0
+        END) AS Has_2024_Same_Policy
+INTO #history_2024_agg
+FROM #no_inbound_export AS n
+LEFT JOIN #prior_history AS h
+    ON h.Historical_Coverage_Year = 2024
+   AND h.Historical_Enrollee_ID = n.FFM_Enrollee_ID
+GROUP BY
+    n.FFM_Coverage_Year,
+    n.FFM_Policy_ID,
+    n.FFM_Enrollee_ID;
+
+CREATE UNIQUE CLUSTERED INDEX CX_history_2024_agg
+    ON #history_2024_agg (
+        FFM_Coverage_Year,
+        FFM_Policy_ID,
+        FFM_Enrollee_ID
+    );
+
+
+-- =============================================================================
+-- C4 — REPRESENTATIVE 2025 HISTORY ROW
+-- Ranking is for display only:
+--   1) same issuer + same policy
+--   2) same issuer
+--   3) any same-enrollee 2025 row
+-- Within each tier, use the validated five-field latest-row chronology.
+-- Multiplicity remains preserved in aggregate count/list fields.
+-- =============================================================================
+IF OBJECT_ID('tempdb..#history_2025_best') IS NOT NULL
+    DROP TABLE #history_2025_best;
+
+SELECT *
+INTO #history_2025_best
+FROM (
     SELECT
-        co.object_id,
-        co.schema_name,
-        co.object_name,
-        co.object_type,
-        c.name AS column_name,
-        LOWER(
-            REPLACE(
-                REPLACE(
-                    REPLACE(c.name, '_', ''),
-                    ' ',
-                    ''
-                ),
-                '-',
-                ''
-            )
-        ) AS normalized_column_name
-    FROM candidate_object_ids AS co
-    INNER JOIN sys.columns AS c
-        ON c.object_id = co.object_id
-)
-SELECT
-    object_id,
-    schema_name,
-    object_name,
-    object_type,
-    MAX(CASE
-            WHEN normalized_column_name IN (
-                'coverageyear',
-                'planyear',
-                'benefityear',
-                'year'
-            ) THEN column_name
-        END) AS coverage_year_column,
-    MAX(CASE
-            WHEN normalized_column_name IN (
-                'enrollmentid',
-                'policyid',
-                'exchangeassignedpolicyid',
-                'exchgassignedpolicyid',
-                'healthcoveragepolicyno'
-            ) THEN column_name
-        END) AS policy_key_column,
-    MAX(CASE
-            WHEN normalized_column_name IN (
-                'enrolleeid',
-                'memberid',
-                'exchangeassignedenrolleeid',
-                'exchgassignedenrolleeid',
-                'issuerindividentifier'
-            ) THEN column_name
-        END) AS enrollee_key_column,
-    MAX(CASE
-            WHEN normalized_column_name IN (
-                'hiosissuerid',
-                'issuerid',
-                'issuer'
-            ) THEN column_name
-        END) AS issuer_column,
-    MAX(CASE
-            WHEN normalized_column_name = 'enrollmentid'
-                THEN 1 ELSE 0
-        END) AS has_exact_ffm_policy_key,
-    MAX(CASE
-            WHEN normalized_column_name = 'enrolleeid'
-                THEN 1 ELSE 0
-        END) AS has_exact_ffm_enrollee_key,
-    MAX(CASE
-            WHEN normalized_column_name = 'coverageyear'
-                THEN 1 ELSE 0
-        END) AS has_exact_ffm_coverage_year
-INTO #candidate_objects
-FROM all_columns
-GROUP BY
-    object_id,
-    schema_name,
-    object_name,
-    object_type;
+        n.FFM_Coverage_Year,
+        n.FFM_Policy_ID,
+        n.FFM_Enrollee_ID,
+        h.Historical_Policy_ID,
+        h.Historical_Issuer,
+        h.Historical_Enrollment_Status,
+        h.Historical_Enrollee_Status,
+        h.Historical_Benefit_Effective_Date,
+        h.Historical_Benefit_End_Date,
+        h.Historical_Enrollment_Create_Date,
+        h.Historical_Enrollment_Last_Update_Date,
+        h.Historical_Enrollee_Create_Date,
+        h.Historical_Enrollee_Last_Update_Date,
+        h.Historical_Person_Type,
+        h.Historical_Relationship_Type,
+        h.Historical_Net_Premium_Amount,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                n.FFM_Coverage_Year,
+                n.FFM_Policy_ID,
+                n.FFM_Enrollee_ID
+            ORDER BY
+                CASE
+                    WHEN h.Historical_Issuer = n.FFM_Issuer
+                     AND h.Historical_Policy_ID = n.FFM_Policy_ID THEN 1
+                    WHEN h.Historical_Issuer = n.FFM_Issuer THEN 2
+                    ELSE 3
+                END,
+                h.Historical_Enrollment_Last_Update_Date DESC,
+                h.Historical_Enrollee_Last_Update_Date DESC,
+                h.Historical_Enrollment_Create_Date DESC,
+                h.Historical_Enrollee_Create_Date DESC,
+                h.Historical_Benefit_Effective_Date DESC,
+                h.Historical_Policy_ID
+        ) AS rn
+    FROM #no_inbound_export AS n
+    INNER JOIN #prior_history AS h
+        ON h.Historical_Coverage_Year = 2025
+       AND h.Historical_Enrollee_ID = n.FFM_Enrollee_ID
+) AS ranked
+WHERE rn = 1;
 
-CREATE UNIQUE CLUSTERED INDEX CX_candidate_objects
-    ON #candidate_objects (object_id);
+CREATE UNIQUE CLUSTERED INDEX CX_history_2025_best
+    ON #history_2025_best (
+        FFM_Coverage_Year,
+        FFM_Policy_ID,
+        FFM_Enrollee_ID
+    );
 
 
 -- =============================================================================
--- 3) Profile distinct candidate values and coverage years
+-- C5 — REPRESENTATIVE 2024 HISTORY ROW
+-- Same display-only ranking approach as 2025.
 -- =============================================================================
--- Profiles ordinary scalar SQL types only. Unsupported/large object types remain
--- visible in the metadata result but are not dynamically converted.
--- =============================================================================
-IF OBJECT_ID('tempdb..#candidate_value_profile') IS NOT NULL
-    DROP TABLE #candidate_value_profile;
+IF OBJECT_ID('tempdb..#history_2024_best') IS NOT NULL
+    DROP TABLE #history_2024_best;
 
-CREATE TABLE #candidate_value_profile (
-    schema_name SYSNAME NOT NULL,
-    object_name SYSNAME NOT NULL,
-    object_type VARCHAR(20) NOT NULL,
-    column_name SYSNAME NOT NULL,
-    data_type SYSNAME NOT NULL,
-    coverage_year_column SYSNAME NULL,
-    coverage_year_value NVARCHAR(100) NULL,
-    distinct_indicator_value NVARCHAR(4000) NULL,
-    record_count BIGINT NOT NULL,
-    profile_status VARCHAR(40) NOT NULL
-);
+SELECT *
+INTO #history_2024_best
+FROM (
+    SELECT
+        n.FFM_Coverage_Year,
+        n.FFM_Policy_ID,
+        n.FFM_Enrollee_ID,
+        h.Historical_Policy_ID,
+        h.Historical_Issuer,
+        h.Historical_Enrollment_Status,
+        h.Historical_Enrollee_Status,
+        h.Historical_Benefit_Effective_Date,
+        h.Historical_Benefit_End_Date,
+        h.Historical_Enrollment_Create_Date,
+        h.Historical_Enrollment_Last_Update_Date,
+        h.Historical_Enrollee_Create_Date,
+        h.Historical_Enrollee_Last_Update_Date,
+        h.Historical_Person_Type,
+        h.Historical_Relationship_Type,
+        h.Historical_Net_Premium_Amount,
+        ROW_NUMBER() OVER (
+            PARTITION BY
+                n.FFM_Coverage_Year,
+                n.FFM_Policy_ID,
+                n.FFM_Enrollee_ID
+            ORDER BY
+                CASE
+                    WHEN h.Historical_Issuer = n.FFM_Issuer
+                     AND h.Historical_Policy_ID = n.FFM_Policy_ID THEN 1
+                    WHEN h.Historical_Issuer = n.FFM_Issuer THEN 2
+                    ELSE 3
+                END,
+                h.Historical_Enrollment_Last_Update_Date DESC,
+                h.Historical_Enrollee_Last_Update_Date DESC,
+                h.Historical_Enrollment_Create_Date DESC,
+                h.Historical_Enrollee_Create_Date DESC,
+                h.Historical_Benefit_Effective_Date DESC,
+                h.Historical_Policy_ID
+        ) AS rn
+    FROM #no_inbound_export AS n
+    INNER JOIN #prior_history AS h
+        ON h.Historical_Coverage_Year = 2024
+       AND h.Historical_Enrollee_ID = n.FFM_Enrollee_ID
+) AS ranked
+WHERE rn = 1;
 
-DECLARE
-    @schema_name SYSNAME,
-    @object_name SYSNAME,
-    @object_type VARCHAR(20),
-    @column_name SYSNAME,
-    @data_type SYSNAME,
-    @coverage_year_column SYSNAME,
-    @profile_sql NVARCHAR(MAX);
-
-DECLARE candidate_cursor CURSOR LOCAL FAST_FORWARD FOR
-SELECT
-    c.schema_name,
-    c.object_name,
-    c.object_type,
-    c.column_name,
-    c.data_type,
-    o.coverage_year_column
-FROM #candidate_columns AS c
-INNER JOIN #candidate_objects AS o
-    ON o.object_id = c.object_id
-ORDER BY
-    c.schema_name,
-    c.object_name,
-    c.column_id;
-
-OPEN candidate_cursor;
-
-FETCH NEXT FROM candidate_cursor INTO
-    @schema_name,
-    @object_name,
-    @object_type,
-    @column_name,
-    @data_type,
-    @coverage_year_column;
-
-WHILE @@FETCH_STATUS = 0
-BEGIN
-    IF @data_type IN (
-        'bit',
-        'tinyint',
-        'smallint',
-        'int',
-        'bigint',
-        'decimal',
-        'numeric',
-        'money',
-        'smallmoney',
-        'float',
-        'real',
-        'char',
-        'varchar',
-        'nchar',
-        'nvarchar',
-        'date',
-        'datetime',
-        'datetime2',
-        'smalldatetime',
-        'datetimeoffset',
-        'uniqueidentifier'
-    )
-    BEGIN
-        SET @profile_sql =
-            N'INSERT INTO #candidate_value_profile (
-                schema_name,
-                object_name,
-                object_type,
-                column_name,
-                data_type,
-                coverage_year_column,
-                coverage_year_value,
-                distinct_indicator_value,
-                record_count,
-                profile_status
-            )
-            SELECT
-                @p_schema_name,
-                @p_object_name,
-                @p_object_type,
-                @p_column_name,
-                @p_data_type,
-                @p_coverage_year_column,'
-            + CASE
-                WHEN @coverage_year_column IS NULL
-                    THEN N'CAST(NULL AS NVARCHAR(100)),'
-                ELSE
-                    N'TRY_CONVERT(
-                        NVARCHAR(100),
-                        src.' + QUOTENAME(@coverage_year_column) + N'
-                    ),'
-              END
-            + N'TRY_CONVERT(
-                    NVARCHAR(4000),
-                    src.' + QUOTENAME(@column_name) + N'
-                ),
-                COUNT_BIG(*),
-                ''PROFILED''
-            FROM '
-            + QUOTENAME(@schema_name)
-            + N'.'
-            + QUOTENAME(@object_name)
-            + N' AS src
-            GROUP BY '
-            + CASE
-                WHEN @coverage_year_column IS NULL
-                    THEN N''
-                ELSE
-                    N'TRY_CONVERT(
-                        NVARCHAR(100),
-                        src.' + QUOTENAME(@coverage_year_column) + N'
-                    ),'
-              END
-            + N'TRY_CONVERT(
-                    NVARCHAR(4000),
-                    src.' + QUOTENAME(@column_name) + N'
-                );';
-
-        EXEC sys.sp_executesql
-            @profile_sql,
-            N'@p_schema_name SYSNAME,
-              @p_object_name SYSNAME,
-              @p_object_type VARCHAR(20),
-              @p_column_name SYSNAME,
-              @p_data_type SYSNAME,
-              @p_coverage_year_column SYSNAME',
-            @p_schema_name = @schema_name,
-            @p_object_name = @object_name,
-            @p_object_type = @object_type,
-            @p_column_name = @column_name,
-            @p_data_type = @data_type,
-            @p_coverage_year_column = @coverage_year_column;
-    END
-    ELSE
-    BEGIN
-        INSERT INTO #candidate_value_profile (
-            schema_name,
-            object_name,
-            object_type,
-            column_name,
-            data_type,
-            coverage_year_column,
-            coverage_year_value,
-            distinct_indicator_value,
-            record_count,
-            profile_status
-        )
-        VALUES (
-            @schema_name,
-            @object_name,
-            @object_type,
-            @column_name,
-            @data_type,
-            @coverage_year_column,
-            NULL,
-            NULL,
-            0,
-            'UNSUPPORTED_TYPE_NOT_PROFILED'
-        );
-    END;
-
-    FETCH NEXT FROM candidate_cursor INTO
-        @schema_name,
-        @object_name,
-        @object_type,
-        @column_name,
-        @data_type,
-        @coverage_year_column;
-END;
-
-CLOSE candidate_cursor;
-DEALLOCATE candidate_cursor;
+CREATE UNIQUE CLUSTERED INDEX CX_history_2024_best
+    ON #history_2024_best (
+        FFM_Coverage_Year,
+        FFM_Policy_ID,
+        FFM_Enrollee_ID
+    );
 
 
 -- =============================================================================
--- 4) Stored procedure, function, view, and trigger definitions mentioning
---    renewal/origin concepts
+-- C6 — DISTINCT 2025 POLICY / ISSUER VALUE LISTS
+-- Lists preserve multiplicity evidence without multiplying final rows.
 -- =============================================================================
-IF OBJECT_ID('tempdb..#module_matches') IS NOT NULL
-    DROP TABLE #module_matches;
+IF OBJECT_ID('tempdb..#history_2025_policy_lists') IS NOT NULL
+    DROP TABLE #history_2025_policy_lists;
 
 SELECT
-    s.name AS schema_name,
-    o.name AS object_name,
-    o.type_desc AS object_type,
-    CASE
-        WHEN LOWER(m.definition) LIKE '%autorenew%'
-          OR LOWER(m.definition) LIKE '%auto-renew%'
-          OR LOWER(m.definition) LIKE '%auto renewal%'
-            THEN 'AUTO_RENEWAL_TEXT'
-        WHEN LOWER(m.definition) LIKE '%passive%renew%'
-            THEN 'PASSIVE_RENEWAL_TEXT'
-        WHEN LOWER(m.definition) LIKE '%reenroll%'
-            THEN 'REENROLLMENT_TEXT'
-        WHEN LOWER(m.definition) LIKE '%renew%'
-            THEN 'RENEWAL_TEXT'
-        WHEN LOWER(m.definition) LIKE '%origin%'
-            THEN 'ORIGIN_TEXT'
-        ELSE 'OTHER'
-    END AS match_reason
-INTO #module_matches
-FROM sys.sql_modules AS m
-INNER JOIN sys.objects AS o
-    ON o.object_id = m.object_id
-INNER JOIN sys.schemas AS s
-    ON s.schema_id = o.schema_id
-WHERE o.is_ms_shipped = 0
-  AND (
-         LOWER(m.definition) LIKE '%autorenew%'
-      OR LOWER(m.definition) LIKE '%auto-renew%'
-      OR LOWER(m.definition) LIKE '%auto renewal%'
-      OR LOWER(m.definition) LIKE '%passive%renew%'
-      OR LOWER(m.definition) LIKE '%reenroll%'
-      OR LOWER(m.definition) LIKE '%renew%'
-      OR LOWER(m.definition) LIKE '%origin%'
-  );
+    d.Historical_Enrollee_ID,
+    STRING_AGG(
+        CAST(d.Historical_Policy_ID AS NVARCHAR(MAX)),
+        N' | '
+    ) AS History_2025_Policy_ID_List
+INTO #history_2025_policy_lists
+FROM (
+    SELECT DISTINCT
+        Historical_Enrollee_ID,
+        Historical_Policy_ID
+    FROM #prior_history
+    WHERE Historical_Coverage_Year = 2025
+      AND Historical_Policy_ID IS NOT NULL
+) AS d
+GROUP BY d.Historical_Enrollee_ID;
 
+CREATE UNIQUE CLUSTERED INDEX CX_history_2025_policy_lists
+    ON #history_2025_policy_lists (Historical_Enrollee_ID);
 
--- =============================================================================
--- RESULT 1 — Candidate Auto-Renewal columns and joinability
--- =============================================================================
+IF OBJECT_ID('tempdb..#history_2025_issuer_lists') IS NOT NULL
+    DROP TABLE #history_2025_issuer_lists;
+
 SELECT
-    c.schema_name AS Schema_Name,
-    c.object_name AS Object_Name,
-    c.object_type AS Object_Type,
-    c.column_name AS Column_Name,
-    c.data_type AS Data_Type,
-    c.max_length AS Max_Length,
-    c.precision AS Numeric_Precision,
-    c.scale AS Numeric_Scale,
-    c.is_nullable AS Is_Nullable,
-    c.candidate_reason AS Candidate_Reason,
-    o.coverage_year_column AS Coverage_Year_Column,
-    o.policy_key_column AS Candidate_Policy_Key,
-    o.enrollee_key_column AS Candidate_Enrollee_Key,
-    o.issuer_column AS Candidate_Issuer_Column,
-    CASE
-        WHEN o.has_exact_ffm_coverage_year = 1
-         AND o.has_exact_ffm_policy_key = 1
-         AND o.has_exact_ffm_enrollee_key = 1
-            THEN 'DIRECT_VALIDATED_GRAIN_AVAILABLE'
-        WHEN o.policy_key_column IS NOT NULL
-         AND o.enrollee_key_column IS NOT NULL
-            THEN 'POTENTIAL_POLICY_ENROLLEE_JOIN_REQUIRES_VALIDATION'
-        WHEN o.enrollee_key_column IS NOT NULL
-            THEN 'ENROLLEE_ONLY_JOIN_RISK_OF_MULTIPLICATION'
-        ELSE 'NO_OBVIOUS_JOIN_TO_VALIDATED_GRAIN'
-    END AS Joinability_Assessment
-FROM #candidate_columns AS c
-INNER JOIN #candidate_objects AS o
-    ON o.object_id = c.object_id
-ORDER BY
-    CASE c.candidate_reason
-        WHEN 'AUTO_RENEWAL_NAME' THEN 1
-        WHEN 'PASSIVE_RENEWAL_NAME' THEN 2
-        WHEN 'REENROLLMENT_NAME' THEN 3
-        WHEN 'RENEWAL_NAME' THEN 4
-        WHEN 'ORIGIN_NAME' THEN 5
-        ELSE 99
-    END,
-    c.schema_name,
-    c.object_name,
-    c.column_id;
+    d.Historical_Enrollee_ID,
+    STRING_AGG(
+        CAST(d.Historical_Issuer AS NVARCHAR(MAX)),
+        N' | '
+    ) AS History_2025_Issuer_List
+INTO #history_2025_issuer_lists
+FROM (
+    SELECT DISTINCT
+        Historical_Enrollee_ID,
+        Historical_Issuer
+    FROM #prior_history
+    WHERE Historical_Coverage_Year = 2025
+      AND Historical_Issuer IS NOT NULL
+) AS d
+GROUP BY d.Historical_Enrollee_ID;
+
+CREATE UNIQUE CLUSTERED INDEX CX_history_2025_issuer_lists
+    ON #history_2025_issuer_lists (Historical_Enrollee_ID);
 
 
 -- =============================================================================
--- RESULT 2 — Distinct values, coverage years, and record counts
+-- D1 — ONE FINAL ANALYTICAL ROW PER VALIDATED 2026 BUSINESS ENTITY
+-- Mutually exclusive historical classifications.
+--
+-- Precedence:
+--   4 before 1/2/3 when 2025 evidence is multiple or has incomplete keys.
+--   Then exact continuity, same-issuer policy transition, issuer transition.
+--   If no 2025 evidence, test 2024; otherwise no prior history.
 -- =============================================================================
+RAISERROR('PHASE2 D1: classify historical lineage', 10, 1) WITH NOWAIT;
+
+IF OBJECT_ID('tempdb..#lineage_final') IS NOT NULL
+    DROP TABLE #lineage_final;
+
 SELECT
-    schema_name AS Schema_Name,
-    object_name AS Object_Name,
-    object_type AS Object_Type,
-    column_name AS Column_Name,
-    data_type AS Data_Type,
-    coverage_year_column AS Coverage_Year_Column,
-    coverage_year_value AS Coverage_Year_Value,
-    distinct_indicator_value AS Distinct_Indicator_Value,
-    record_count AS Record_Count,
-    profile_status AS Profile_Status
-FROM #candidate_value_profile
-ORDER BY
-    schema_name,
-    object_name,
-    column_name,
-    coverage_year_value,
-    record_count DESC,
-    distinct_indicator_value;
+    n.FFM_Coverage_Year,
+    n.FFM_Issuer,
+    n.FFM_Policy_ID,
+    n.FFM_Enrollee_ID,
+    n.FFM_Enrollment_Status,
+    n.FFM_Enrollee_Status,
+    n.FFM_Benefit_Effective_Date,
+    n.FFM_Benefit_End_Date,
+    n.FFM_Enrollment_Create_Date,
+    n.FFM_Enrollment_Last_Update_Date,
+    n.FFM_Enrollee_Create_Date,
+    n.FFM_Enrollee_Last_Update_Date,
+    n.FFM_Person_Type,
+    n.FFM_Relationship_Type,
+    n.FFM_Net_Premium_Amount,
 
+    CAST(CASE WHEN a25.History_2025_Row_Count > 0 THEN 'Y' ELSE 'N' END AS CHAR(1))
+        AS Enrollee_Found_2025,
+    a25.History_2025_Row_Count,
+    a25.History_2025_Distinct_Policy_Count,
+    a25.History_2025_Distinct_Issuer_Count,
+    CAST(CASE WHEN a25.Has_2025_Same_Issuer_Same_Policy = 1
+              OR a25.Has_2025_Same_Issuer_Different_Policy = 1
+              THEN 'Y' ELSE 'N' END AS CHAR(1)) AS Same_Issuer_2025,
+    CAST(CASE WHEN a25.Has_2025_Same_Issuer_Same_Policy = 1
+              THEN 'Y' ELSE 'N' END AS CHAR(1)) AS Same_Policy_2025,
+    CAST(CASE WHEN a25.Has_2025_Different_Issuer = 1
+              THEN 'Y' ELSE 'N' END AS CHAR(1)) AS Different_Issuer_2025,
+    p25.History_2025_Policy_ID_List,
+    i25.History_2025_Issuer_List,
+    b25.Historical_Policy_ID AS Representative_2025_Policy_ID,
+    b25.Historical_Issuer AS Representative_2025_Issuer,
+    b25.Historical_Enrollment_Status AS Representative_2025_Enrollment_Status,
+    b25.Historical_Enrollee_Status AS Representative_2025_Enrollee_Status,
+    b25.Historical_Benefit_Effective_Date AS Representative_2025_Benefit_Effective_Date,
+    b25.Historical_Benefit_End_Date AS Representative_2025_Benefit_End_Date,
+    b25.Historical_Enrollment_Create_Date AS Representative_2025_Enrollment_Create_Date,
+    b25.Historical_Enrollment_Last_Update_Date AS Representative_2025_Enrollment_Last_Update_Date,
+    b25.Historical_Enrollee_Create_Date AS Representative_2025_Enrollee_Create_Date,
+    b25.Historical_Enrollee_Last_Update_Date AS Representative_2025_Enrollee_Last_Update_Date,
+    b25.Historical_Person_Type AS Representative_2025_Person_Type,
+    b25.Historical_Relationship_Type AS Representative_2025_Relationship_Type,
+    b25.Historical_Net_Premium_Amount AS Representative_2025_Net_Premium_Amount,
 
--- =============================================================================
--- RESULT 3 — Candidate object totals and candidate indicator counts
--- =============================================================================
-SELECT
-    p.schema_name AS Schema_Name,
-    p.object_name AS Object_Name,
-    p.object_type AS Object_Type,
-    p.column_name AS Column_Name,
-    p.data_type AS Data_Type,
-    p.coverage_year_column AS Coverage_Year_Column,
-    COUNT(*) AS Profiled_Value_Year_Combinations,
-    SUM(p.record_count) AS Total_Records_Profiled,
-    COUNT(DISTINCT p.distinct_indicator_value) AS Distinct_Indicator_Values,
-    COUNT(DISTINCT p.coverage_year_value) AS Distinct_Coverage_Years
-FROM #candidate_value_profile AS p
-WHERE p.profile_status = 'PROFILED'
-GROUP BY
-    p.schema_name,
-    p.object_name,
-    p.object_type,
-    p.column_name,
-    p.data_type,
-    p.coverage_year_column
-ORDER BY
-    p.schema_name,
-    p.object_name,
-    p.column_name;
+    CAST(CASE WHEN a24.History_2024_Row_Count > 0 THEN 'Y' ELSE 'N' END AS CHAR(1))
+        AS Enrollee_Found_2024,
+    a24.History_2024_Row_Count,
+    a24.History_2024_Distinct_Policy_Count,
+    a24.History_2024_Distinct_Issuer_Count,
+    CAST(CASE WHEN a24.Has_2024_Same_Issuer = 1
+              THEN 'Y' ELSE 'N' END AS CHAR(1)) AS Same_Issuer_2024,
+    CAST(CASE WHEN a24.Has_2024_Same_Policy = 1
+              THEN 'Y' ELSE 'N' END AS CHAR(1)) AS Same_Policy_2024,
+    b24.Historical_Policy_ID AS Representative_2024_Policy_ID,
+    b24.Historical_Issuer AS Representative_2024_Issuer,
+    b24.Historical_Enrollment_Status AS Representative_2024_Enrollment_Status,
+    b24.Historical_Enrollee_Status AS Representative_2024_Enrollee_Status,
+    b24.Historical_Benefit_Effective_Date AS Representative_2024_Benefit_Effective_Date,
+    b24.Historical_Benefit_End_Date AS Representative_2024_Benefit_End_Date,
 
-
--- =============================================================================
--- RESULT 4 — SQL modules containing renewal/origin logic
--- =============================================================================
-SELECT
-    schema_name AS Schema_Name,
-    object_name AS Object_Name,
-    object_type AS Object_Type,
-    match_reason AS Match_Reason
-FROM #module_matches
-ORDER BY
-    CASE match_reason
-        WHEN 'AUTO_RENEWAL_TEXT' THEN 1
-        WHEN 'PASSIVE_RENEWAL_TEXT' THEN 2
-        WHEN 'REENROLLMENT_TEXT' THEN 3
-        WHEN 'RENEWAL_TEXT' THEN 4
-        WHEN 'ORIGIN_TEXT' THEN 5
-        ELSE 99
-    END,
-    schema_name,
-    object_name;
-
-
--- =============================================================================
--- RESULT 5 — Phase 1 disposition
--- =============================================================================
-SELECT
-    (SELECT COUNT_BIG(*) FROM #candidate_columns)
-        AS Candidate_Column_Count,
-    (SELECT COUNT_BIG(*) FROM #candidate_objects)
-        AS Candidate_Object_Count,
-    (SELECT COUNT_BIG(*) FROM #module_matches)
-        AS Candidate_Module_Count,
-    CAST(109776 AS BIGINT) AS Validated_No_Inbound_Control,
-    CAST(75390 AS BIGINT) AS Business_Reported_Auto_Renewal_Reference,
     CAST(
         CASE
-            WHEN EXISTS (
-                SELECT 1
-                FROM #candidate_columns AS c
-                INNER JOIN #candidate_objects AS o
-                    ON o.object_id = c.object_id
-                WHERE c.candidate_reason IN (
-                    'AUTO_RENEWAL_NAME',
-                    'PASSIVE_RENEWAL_NAME'
-                )
-                  AND o.has_exact_ffm_coverage_year = 1
-                  AND o.has_exact_ffm_policy_key = 1
-                  AND o.has_exact_ffm_enrollee_key = 1
-            )
-                THEN 'DIRECT_CANDIDATE_FOUND_REQUIRES_BUSINESS_VALIDATION'
-            WHEN EXISTS (
-                SELECT 1
-                FROM #candidate_columns
-                WHERE candidate_reason IN (
-                    'AUTO_RENEWAL_NAME',
-                    'PASSIVE_RENEWAL_NAME',
-                    'REENROLLMENT_NAME',
-                    'RENEWAL_NAME'
-                )
-            )
-                THEN 'RENEWAL_CANDIDATE_FOUND_JOIN_OR_SEMANTICS_UNPROVEN'
-            ELSE 'NO_DIRECT_RENEWAL_COLUMN_FOUND_PROCEED_TO_LINEAGE_PHASE'
+            WHEN a25.History_2025_Row_Count > 1
+              OR a25.History_2025_Distinct_Policy_Count > 1
+              OR a25.History_2025_Distinct_Issuer_Count > 1
+              OR a25.Has_2025_Incomplete_Key = 1
+                THEN '4_2025_MULTIPLE_OR_AMBIGUOUS_HISTORY'
+            WHEN a25.Has_2025_Same_Issuer_Same_Policy = 1
+                THEN '1_2025_SAME_ENROLLEE_SAME_ISSUER_SAME_POLICY'
+            WHEN a25.Has_2025_Same_Issuer_Different_Policy = 1
+                THEN '2_2025_SAME_ENROLLEE_SAME_ISSUER_DIFFERENT_POLICY'
+            WHEN a25.Has_2025_Different_Issuer = 1
+                THEN '3_2025_SAME_ENROLLEE_DIFFERENT_ISSUER'
+            WHEN a25.History_2025_Row_Count > 0
+                THEN '4_2025_MULTIPLE_OR_AMBIGUOUS_HISTORY'
+            WHEN a24.History_2024_Row_Count > 0
+                THEN '5_NO_2025_HISTORY_BUT_2024_HISTORY_EXISTS'
+            ELSE '6_NO_2025_OR_2024_ENROLLEE_HISTORY'
         END
         AS VARCHAR(70)
-    ) AS Phase_1_Status;
+    ) AS Historical_Classification,
+
+    CAST(
+        CASE
+            WHEN a25.History_2025_Row_Count > 1
+              OR a25.History_2025_Distinct_Policy_Count > 1
+              OR a25.History_2025_Distinct_Issuer_Count > 1
+              OR a25.Has_2025_Incomplete_Key = 1
+                THEN CONCAT(
+                    '2025 same-enrollee history requires review: rows=',
+                    a25.History_2025_Row_Count,
+                    ', policies=', a25.History_2025_Distinct_Policy_Count,
+                    ', issuers=', a25.History_2025_Distinct_Issuer_Count,
+                    ', incomplete_key=', a25.Has_2025_Incomplete_Key
+                )
+            WHEN a25.Has_2025_Same_Issuer_Same_Policy = 1
+                THEN 'Same Enrollee ID, FFM Issuer, and Policy ID found in 2025'
+            WHEN a25.Has_2025_Same_Issuer_Different_Policy = 1
+                THEN 'Same Enrollee ID and FFM Issuer found in 2025; Policy ID differs'
+            WHEN a25.Has_2025_Different_Issuer = 1
+                THEN 'Same Enrollee ID found in 2025 under a different issuer'
+            WHEN a25.History_2025_Row_Count > 0
+                THEN '2025 same-enrollee history exists but keys are insufficient for categories 1-3'
+            WHEN a24.History_2024_Row_Count > 0
+                THEN 'No 2025 same-enrollee history; same Enrollee ID found in 2024'
+            ELSE 'Same Enrollee ID not found in Enrollments_TEST coverage years 2025 or 2024'
+        END
+        AS NVARCHAR(500)
+    ) AS Classification_Reason
+INTO #lineage_final
+FROM #no_inbound_export AS n
+INNER JOIN #history_2025_agg AS a25
+    ON a25.FFM_Coverage_Year = n.FFM_Coverage_Year
+   AND a25.FFM_Policy_ID = n.FFM_Policy_ID
+   AND a25.FFM_Enrollee_ID = n.FFM_Enrollee_ID
+INNER JOIN #history_2024_agg AS a24
+    ON a24.FFM_Coverage_Year = n.FFM_Coverage_Year
+   AND a24.FFM_Policy_ID = n.FFM_Policy_ID
+   AND a24.FFM_Enrollee_ID = n.FFM_Enrollee_ID
+LEFT JOIN #history_2025_best AS b25
+    ON b25.FFM_Coverage_Year = n.FFM_Coverage_Year
+   AND b25.FFM_Policy_ID = n.FFM_Policy_ID
+   AND b25.FFM_Enrollee_ID = n.FFM_Enrollee_ID
+LEFT JOIN #history_2024_best AS b24
+    ON b24.FFM_Coverage_Year = n.FFM_Coverage_Year
+   AND b24.FFM_Policy_ID = n.FFM_Policy_ID
+   AND b24.FFM_Enrollee_ID = n.FFM_Enrollee_ID
+LEFT JOIN #history_2025_policy_lists AS p25
+    ON p25.Historical_Enrollee_ID = n.FFM_Enrollee_ID
+LEFT JOIN #history_2025_issuer_lists AS i25
+    ON i25.Historical_Enrollee_ID = n.FFM_Enrollee_ID;
+
+CREATE CLUSTERED INDEX CX_lineage_final
+    ON #lineage_final (
+        FFM_Coverage_Year,
+        FFM_Policy_ID,
+        FFM_Enrollee_ID
+    );
+
+CREATE NONCLUSTERED INDEX IX_lineage_class
+    ON #lineage_final (
+        Historical_Classification,
+        FFM_Issuer
+    );
+
+
+-- =============================================================================
+-- D2 — SAME-ENROLLEE + SAME-ISSUER 2025 STATUS EVIDENCE
+-- Separate evidence table; it does not change or multiply #lineage_final.
+-- =============================================================================
+IF OBJECT_ID('tempdb..#same_issuer_2025_status_evidence') IS NOT NULL
+    DROP TABLE #same_issuer_2025_status_evidence;
+
+SELECT
+    n.FFM_Coverage_Year,
+    n.FFM_Policy_ID,
+    n.FFM_Enrollee_ID,
+    h.Historical_Policy_ID,
+    h.Historical_Enrollment_Status,
+    h.Historical_Enrollee_Status
+INTO #same_issuer_2025_status_evidence
+FROM #no_inbound_export AS n
+INNER JOIN #prior_history AS h
+    ON h.Historical_Coverage_Year = 2025
+   AND h.Historical_Enrollee_ID = n.FFM_Enrollee_ID
+   AND h.Historical_Issuer = n.FFM_Issuer;
+
+CREATE CLUSTERED INDEX CX_same_issuer_2025_status
+    ON #same_issuer_2025_status_evidence (
+        Historical_Enrollment_Status,
+        Historical_Enrollee_Status,
+        FFM_Policy_ID,
+        FFM_Enrollee_ID
+    );
+
+
+-- =============================================================================
+-- E — HARD RECONCILIATION CONTROLS
+-- =============================================================================
+DECLARE @lineage_row_count BIGINT = (
+    SELECT COUNT_BIG(*) FROM #lineage_final
+);
+
+DECLARE @lineage_distinct_grain_count BIGINT = (
+    SELECT COUNT_BIG(*)
+    FROM (
+        SELECT
+            FFM_Coverage_Year,
+            FFM_Policy_ID,
+            FFM_Enrollee_ID
+        FROM #lineage_final
+        GROUP BY
+            FFM_Coverage_Year,
+            FFM_Policy_ID,
+            FFM_Enrollee_ID
+    ) AS d
+);
+
+DECLARE @lineage_duplicate_count BIGINT =
+    @lineage_row_count - @lineage_distinct_grain_count;
+
+DECLARE @classification_bucket_sum BIGINT = (
+    SELECT SUM(bucket_count)
+    FROM (
+        SELECT COUNT_BIG(*) AS bucket_count
+        FROM #lineage_final
+        GROUP BY Historical_Classification
+    ) AS buckets
+);
+
+DECLARE @control_status VARCHAR(4) =
+    CASE
+        WHEN @complete_2026_count = @expected_complete_2026
+         AND @ffm_target_count = @expected_ffm_target
+         AND @no_inbound_count = @expected_no_inbound
+         AND @lineage_row_count = @expected_no_inbound
+         AND @lineage_distinct_grain_count = @expected_no_inbound
+         AND @lineage_duplicate_count = 0
+         AND @classification_bucket_sum = @expected_no_inbound
+            THEN 'PASS'
+        ELSE 'FAIL'
+    END;
+
+SET @msg = CONCAT(
+    'PHASE2 complete: no_inbound=', @no_inbound_count,
+    '; lineage=', @lineage_row_count,
+    '; distinct=', @lineage_distinct_grain_count,
+    '; duplicates=', @lineage_duplicate_count,
+    '; bucket_sum=', @classification_bucket_sum,
+    '; elapsed_s=', DATEDIFF(second, @t0, SYSDATETIME())
+);
+RAISERROR(@msg, 10, 1) WITH NOWAIT;
+
+
+-- =============================================================================
+-- RESULT 1 — CONTROL TABLE
+-- =============================================================================
+SELECT
+    @complete_2026_count AS COMPLETE_2026_DISTINCT_PAIRS,
+    @ffm_target_count AS FFM_TARGET_COUNT,
+    @no_inbound_count AS VALIDATED_NO_INBOUND_COUNT,
+    @lineage_row_count AS LINEAGE_ROW_COUNT,
+    @lineage_distinct_grain_count AS DISTINCT_POLICY_ENROLLEE_COUNT,
+    @lineage_duplicate_count AS DUPLICATE_BUSINESS_ENTITY_COUNT,
+    @classification_bucket_sum AS CLASSIFICATION_BUCKET_SUM,
+    @control_status AS CONTROL_STATUS;
+
+IF @control_status <> 'PASS'
+BEGIN
+    RAISERROR(
+        'STOP E: Phase 2 reconciliation controls failed.',
+        16, 1
+    );
+    RETURN;
+END;
+
+
+-- =============================================================================
+-- RESULT 2 — MUTUALLY EXCLUSIVE HISTORICAL LINEAGE COUNTS
+-- =============================================================================
+SELECT
+    Historical_Classification,
+    COUNT_BIG(*) AS Record_Count,
+    CAST(
+        100.0 * COUNT_BIG(*) / NULLIF(@expected_no_inbound, 0)
+        AS DECIMAL(10, 4)
+    ) AS Percent_of_109776
+FROM #lineage_final
+GROUP BY Historical_Classification
+ORDER BY Historical_Classification;
+
+
+-- =============================================================================
+-- RESULT 3 — ISSUER x HISTORICAL CLASSIFICATION
+-- =============================================================================
+SELECT
+    FFM_Issuer,
+    Historical_Classification,
+    COUNT_BIG(*) AS Record_Count,
+    CAST(
+        100.0 * COUNT_BIG(*)
+        / NULLIF(
+            SUM(COUNT_BIG(*)) OVER (PARTITION BY FFM_Issuer),
+            0
+        )
+        AS DECIMAL(10, 4)
+    ) AS Percent_of_Issuer_No_Inbound
+FROM #lineage_final
+GROUP BY
+    FFM_Issuer,
+    Historical_Classification
+ORDER BY
+    SUM(COUNT_BIG(*)) OVER (PARTITION BY FFM_Issuer) DESC,
+    FFM_Issuer,
+    Historical_Classification;
+
+
+-- =============================================================================
+-- RESULT 4 — 2025 ENROLLMENT STATUS DISTRIBUTION
+-- Scope: same Enrollee ID + same 2026 FFM Issuer found in 2025.
+-- Historical rows can exceed distinct 2026 records when multiple policies exist.
+-- =============================================================================
+SELECT
+    Historical_Enrollment_Status AS Enrollment_Status_2025,
+    COUNT_BIG(*) AS Historical_2025_Row_Count,
+    COUNT(
+        DISTINCT CONCAT(
+            FFM_Coverage_Year,
+            '|',
+            FFM_Policy_ID,
+            '|',
+            FFM_Enrollee_ID
+        )
+    ) AS Distinct_2026_No_Inbound_Records
+FROM #same_issuer_2025_status_evidence
+GROUP BY Historical_Enrollment_Status
+ORDER BY
+    Distinct_2026_No_Inbound_Records DESC,
+    Historical_Enrollment_Status;
+
+
+-- =============================================================================
+-- RESULT 5 — 2025 ENROLLEE STATUS DISTRIBUTION
+-- Scope: same Enrollee ID + same 2026 FFM Issuer found in 2025.
+-- =============================================================================
+SELECT
+    Historical_Enrollee_Status AS Enrollee_Status_2025,
+    COUNT_BIG(*) AS Historical_2025_Row_Count,
+    COUNT(
+        DISTINCT CONCAT(
+            FFM_Coverage_Year,
+            '|',
+            FFM_Policy_ID,
+            '|',
+            FFM_Enrollee_ID
+        )
+    ) AS Distinct_2026_No_Inbound_Records
+FROM #same_issuer_2025_status_evidence
+GROUP BY Historical_Enrollee_Status
+ORDER BY
+    Distinct_2026_No_Inbound_Records DESC,
+    Historical_Enrollee_Status;
+
+
+-- =============================================================================
+-- RESULT 6 — ROW-LEVEL AUDIT DATASET (EXACTLY 109,776 ROWS)
+-- No Auto-Renewal candidate is assigned in Phase 2.
+-- =============================================================================
+SELECT
+    FFM_Coverage_Year,
+    FFM_Issuer,
+    FFM_Policy_ID,
+    FFM_Enrollee_ID,
+    FFM_Enrollment_Status,
+    FFM_Enrollee_Status,
+    FFM_Benefit_Effective_Date,
+    FFM_Benefit_End_Date,
+    FFM_Enrollment_Create_Date,
+    FFM_Enrollment_Last_Update_Date,
+    FFM_Enrollee_Create_Date,
+    FFM_Enrollee_Last_Update_Date,
+    FFM_Person_Type,
+    FFM_Relationship_Type,
+    FFM_Net_Premium_Amount,
+
+    Enrollee_Found_2025,
+    History_2025_Row_Count,
+    History_2025_Distinct_Policy_Count,
+    History_2025_Distinct_Issuer_Count,
+    Same_Issuer_2025,
+    Same_Policy_2025,
+    Different_Issuer_2025,
+    History_2025_Policy_ID_List,
+    History_2025_Issuer_List,
+    Representative_2025_Policy_ID,
+    Representative_2025_Issuer,
+    Representative_2025_Enrollment_Status,
+    Representative_2025_Enrollee_Status,
+    Representative_2025_Benefit_Effective_Date,
+    Representative_2025_Benefit_End_Date,
+    Representative_2025_Enrollment_Create_Date,
+    Representative_2025_Enrollment_Last_Update_Date,
+    Representative_2025_Enrollee_Create_Date,
+    Representative_2025_Enrollee_Last_Update_Date,
+    Representative_2025_Person_Type,
+    Representative_2025_Relationship_Type,
+    Representative_2025_Net_Premium_Amount,
+
+    Enrollee_Found_2024,
+    History_2024_Row_Count,
+    History_2024_Distinct_Policy_Count,
+    History_2024_Distinct_Issuer_Count,
+    Same_Issuer_2024,
+    Same_Policy_2024,
+    Representative_2024_Policy_ID,
+    Representative_2024_Issuer,
+    Representative_2024_Enrollment_Status,
+    Representative_2024_Enrollee_Status,
+    Representative_2024_Benefit_Effective_Date,
+    Representative_2024_Benefit_End_Date,
+
+    Historical_Classification,
+    Classification_Reason
+FROM #lineage_final
+ORDER BY
+    Historical_Classification,
+    FFM_Issuer,
+    FFM_Policy_ID,
+    FFM_Enrollee_ID;
