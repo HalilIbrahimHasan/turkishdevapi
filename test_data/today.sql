@@ -1,285 +1,317 @@
+
+
+
 -- =============================================================================
--- Azure SQL DDL: outbound_automation raw ingestion (NEW TABLES ONLY)
+-- Azure SQL DDL v2: outbound_automation (TO files) — FINAL SCHEMA PROPOSAL
 -- =============================================================================
--- Status: MANUAL EXECUTION ONLY (SSMS) — review before running.
--- Mirrors sql/inbound_automation_ddl.sql 1:1 with inbound -> outbound renames.
--- Does NOT modify dbo.inbound_automation, dbo.inbound_automation_run_log,
--- dbo.inbound_automation_file_log, or any other existing table.
+-- Status: MANUAL EXECUTION ONLY (SSMS) — review/approve before running.
 --
--- Tables:
---   1. dbo.outbound_automation          — one row per Parser834 enrollee
---   2. dbo.outbound_automation_run_log  — one row per load run
---   3. dbo.outbound_automation_file_log — one row per successfully processed file
+-- Purpose: rebuild the four outbound-only objects so they represent the real
+-- outbound TO 834 data model (supersedes sql/outbound_automation_ddl.sql v1).
 --
--- Safety: CREATE TABLE IF NOT EXISTS only. No DROP / TRUNCATE / ALTER.
+-- Objects dropped/created by this script (and NOTHING else):
+--   dbo.outbound_automation_monthly_premium   (new child table)
+--   dbo.outbound_automation                    (one row per outbound enrollee transaction)
+--   dbo.outbound_automation_file_log          (one row per processed file)
+--   dbo.outbound_automation_run_log           (one row per run)
+--
+-- Safety:
+--   * Batch 1 aborts the whole script (SET NOEXEC ON) if any existing outbound
+--     table contains rows. Drops only run when every outbound table is empty.
+--   * Works on a fresh database too (all drops are IF EXISTS).
+--   * No reference to any non-outbound table.
 -- =============================================================================
 
+SET NOCOUNT ON;
+GO
+
 -- -----------------------------------------------------------------------------
--- 1. dbo.outbound_automation
+-- 0. Guard: refuse to drop non-empty outbound tables
 -- -----------------------------------------------------------------------------
-IF OBJECT_ID(N'dbo.outbound_automation', N'U') IS NULL
+DECLARE @blocked NVARCHAR(400) = N'';
+
+IF OBJECT_ID(N'dbo.outbound_automation_monthly_premium', N'U') IS NOT NULL
 BEGIN
-    CREATE TABLE dbo.outbound_automation (
-        -- surrogate / run
-        id                              BIGINT IDENTITY(1,1) NOT NULL,
-        load_run_id                     NVARCHAR(100)        NOT NULL,
-        loaded_at                       DATETIME2(3)         NOT NULL
-            CONSTRAINT DF_outbound_automation_loaded_at DEFAULT SYSUTCDATETIME(),
+    IF EXISTS (SELECT 1 FROM dbo.outbound_automation_monthly_premium)
+        SET @blocked += N' dbo.outbound_automation_monthly_premium';
+END;
+IF OBJECT_ID(N'dbo.outbound_automation', N'U') IS NOT NULL
+BEGIN
+    IF EXISTS (SELECT 1 FROM dbo.outbound_automation)
+        SET @blocked += N' dbo.outbound_automation';
+END;
+IF OBJECT_ID(N'dbo.outbound_automation_file_log', N'U') IS NOT NULL
+BEGIN
+    IF EXISTS (SELECT 1 FROM dbo.outbound_automation_file_log)
+        SET @blocked += N' dbo.outbound_automation_file_log';
+END;
+IF OBJECT_ID(N'dbo.outbound_automation_run_log', N'U') IS NOT NULL
+BEGIN
+    IF EXISTS (SELECT 1 FROM dbo.outbound_automation_run_log)
+        SET @blocked += N' dbo.outbound_automation_run_log';
+END;
 
-        -- automation lineage
-        folder_year                     INT                  NOT NULL,
-        folder_month                    INT                  NOT NULL,
-        filename_file_year              INT                  NULL,
-        filename_file_month             INT                  NULL,
-        source_file                     NVARCHAR(500)        NOT NULL,
-        source_file_path                NVARCHAR(1000)       NOT NULL,
-        file_hash                       NVARCHAR(128)        NOT NULL,
-        row_number_in_file              INT                  NOT NULL,
-        raw_record_hash                 NVARCHAR(128)        NOT NULL,
-
-        -- provenance / coverage (runner-added)
-        parser_version                  NVARCHAR(50)         NULL,
-        runner_version                  NVARCHAR(50)         NULL,
-        git_commit                      NVARCHAR(100)        NULL,
-        coverage_year                   INT                  NULL,
-        coverage_year_source            NVARCHAR(50)         NULL,
-        warning_count                   INT                  NULL,
-
-        -- derived (not parser-native)
-        insurance_type                  NVARCHAR(50)         NULL,
-        enrolleeStatus                  NVARCHAR(50)         NULL,
-
-        -- Parser834 keys (43) — exact snake_case names from parse_file()
-        issuer                          NVARCHAR(20)         NOT NULL,
-        year                            NVARCHAR(4)          NOT NULL,
-        month                           NVARCHAR(2)          NOT NULL,
-        file_name                       NVARCHAR(500)        NOT NULL,
-        raw_xml_path                    NVARCHAR(1000)       NOT NULL,
-        created_at                      NVARCHAR(40)         NOT NULL,
-
-        policy_id                       NVARCHAR(100)        NULL,
-        member_id                       NVARCHAR(100)        NULL,          -- PII: member identifier
-        subscriber_id                   NVARCHAR(100)        NULL,          -- PII: member identifier
-        exchg_assigned_enrollee_id      NVARCHAR(100)        NULL,          -- PII: member identifier
-        issuer_subscriber_identifier    NVARCHAR(100)        NULL,          -- PII: member identifier
-        issuer_indiv_identifier         NVARCHAR(100)        NULL,          -- PII: member identifier
-        member_first_name               NVARCHAR(200)        NULL,          -- PII
-        member_last_name                NVARCHAR(200)        NULL,          -- PII
-        relationship                    NVARCHAR(50)         NULL,
-        subscriber_flag                 NVARCHAR(20)         NULL,
-        enrollee_event_type_code        NVARCHAR(50)         NULL,
-        enrollee_event_reason_code      NVARCHAR(50)         NULL,
-        action_code                     NVARCHAR(50)         NULL,
-        action_code_description         NVARCHAR(100)        NULL,
-        maintenance_type_code           NVARCHAR(50)         NULL,
-        additional_maint_reason_code    NVARCHAR(50)         NULL,
-        coverage_status                 NVARCHAR(100)        NULL,
-        benefit_effective_date          DATE                 NULL,
-        benefit_end_date                DATE                 NULL,
-        member_maint_effective_date     DATE                 NULL,
-        last_premium_paid_date          NVARCHAR(20)         NULL,
-        request_submit_timestamp        NVARCHAR(100)        NULL,
-        total_premium_amount            DECIMAL(18,4)        NULL,
-        individual_responsibility_amount DECIMAL(18,4)       NULL,
-        aptc_amount                     DECIMAL(18,4)        NULL,
-        user_fee_amount                 DECIMAL(18,4)        NULL,
-        insurance_type_code             NVARCHAR(50)         NULL,
-        health_coverage_policy_no       NVARCHAR(100)        NULL,
-        household_or_employee_case_id   NVARCHAR(100)        NULL,
-        rating_area                     NVARCHAR(50)         NULL,
-        source_exchg_id                 NVARCHAR(100)        NULL,
-        enrollment_action_code          NVARCHAR(50)         NULL,
-        insurer_tax_id_number           NVARCHAR(50)         NULL,
-        qtyn                            NVARCHAR(50)         NULL,
-        qtyy                            NVARCHAR(50)         NULL,
-        qtyt                            NVARCHAR(50)         NULL,
-        raw_payload                     NVARCHAR(MAX)        NOT NULL,
-
-        -- lossless enriched backup (parser row + automation + derived + provenance)
-        raw_json                        NVARCHAR(MAX)        NOT NULL,
-
-        CONSTRAINT PK_outbound_automation PRIMARY KEY CLUSTERED (id),
-        CONSTRAINT UQ_outbound_automation_file_row UNIQUE (file_hash, row_number_in_file)
-    );
+IF @blocked <> N''
+BEGIN
+    RAISERROR(N'ABORTED: outbound table(s) not empty:%s. Nothing was dropped.', 16, 1, @blocked);
+    SET NOEXEC ON;
 END;
 GO
 
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_source_file'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_source_file
-        ON dbo.outbound_automation (source_file);
+-- -----------------------------------------------------------------------------
+-- 1. Drop outbound-only tables (child first)
+-- -----------------------------------------------------------------------------
+DROP TABLE IF EXISTS dbo.outbound_automation_monthly_premium;
+DROP TABLE IF EXISTS dbo.outbound_automation;
+DROP TABLE IF EXISTS dbo.outbound_automation_file_log;
+DROP TABLE IF EXISTS dbo.outbound_automation_run_log;
 GO
-
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_issuer_folder'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_issuer_folder
-        ON dbo.outbound_automation (issuer, folder_year, folder_month);
-GO
-
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_issuer_filename_month'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_issuer_filename_month
-        ON dbo.outbound_automation (issuer, filename_file_year, filename_file_month);
-GO
-
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_coverage_year'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_coverage_year
-        ON dbo.outbound_automation (issuer, coverage_year);
-GO
-
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_policy_id'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_policy_id
-        ON dbo.outbound_automation (policy_id);
-GO
-
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_member_id'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_member_id
-        ON dbo.outbound_automation (member_id);
-GO
-
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_load_run_id'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_load_run_id
-        ON dbo.outbound_automation (load_run_id);
-GO
-
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_file_hash'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_file_hash
-        ON dbo.outbound_automation (file_hash);
-GO
-
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_enrolleeStatus'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_enrolleeStatus
-        ON dbo.outbound_automation (enrolleeStatus);
-GO
-
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_insurance_type'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation')
-)
-    CREATE INDEX IX_outbound_automation_insurance_type
-        ON dbo.outbound_automation (insurance_type);
-GO
-
 
 -- -----------------------------------------------------------------------------
--- 2. dbo.outbound_automation_run_log
+-- 2. dbo.outbound_automation — one row per <enrollee> transaction
 -- -----------------------------------------------------------------------------
-IF OBJECT_ID(N'dbo.outbound_automation_run_log', N'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.outbound_automation_run_log (
-        load_run_id                 NVARCHAR(100)    NOT NULL,
-        started_at                  DATETIME2(3)     NOT NULL,
-        completed_at                DATETIME2(3)     NULL,
-        run_mode                    NVARCHAR(20)     NOT NULL,   -- dry_run | load | create_table
-        source_mode                 NVARCHAR(20)     NOT NULL,   -- local | sftp
-        year_filter                 NVARCHAR(50)     NULL,       -- e.g. 2025 or ALL
-        issuer_filter               NVARCHAR(200)    NULL,
-        month_filter                NVARCHAR(50)     NULL,
+CREATE TABLE dbo.outbound_automation (
+    -- surrogate / run
+    id                              BIGINT IDENTITY(1,1) NOT NULL,
+    load_run_id                     NVARCHAR(100)        NOT NULL,
+    loaded_at                       DATETIME2(3)         NOT NULL
+        CONSTRAINT DF_outbound_automation_loaded_at DEFAULT SYSUTCDATETIME(),
 
-        parser_version              NVARCHAR(50)     NULL,
-        runner_version              NVARCHAR(50)     NULL,
-        git_commit                  NVARCHAR(100)    NULL,
+    -- source lineage
+    issuer                          NVARCHAR(20)         NOT NULL,
+    folder_year                     INT                  NOT NULL,
+    folder_month                    INT                  NOT NULL,
+    filename_file_year              INT                  NULL,
+    filename_file_month             INT                  NULL,
+    source_file                     NVARCHAR(500)        NOT NULL,
+    source_file_path                NVARCHAR(1000)       NOT NULL,
+    file_hash                       NVARCHAR(128)        NOT NULL,
+    row_number_in_file              INT                  NOT NULL,
+    raw_record_hash                 NVARCHAR(128)        NOT NULL,
 
-        files_discovered            INT              NOT NULL DEFAULT 0,
-        files_parsed                INT              NOT NULL DEFAULT 0,
-        files_loaded                INT              NOT NULL DEFAULT 0,
-        files_skipped_duplicate     INT              NOT NULL DEFAULT 0,
-        files_failed                INT              NOT NULL DEFAULT 0,
-        rows_parsed                 INT              NOT NULL DEFAULT 0,
-        rows_inserted               INT              NOT NULL DEFAULT 0,
-        rows_skipped                INT              NOT NULL DEFAULT 0,
-        total_warning_count         INT              NULL,
+    -- provenance / data quality
+    parser_version                  NVARCHAR(50)         NULL,
+    runner_version                  NVARCHAR(50)         NULL,
+    git_commit                      NVARCHAR(100)        NULL,
+    warning_count                   INT                  NULL,
+    warning_codes                   NVARCHAR(2000)       NULL,
 
-        status                      NVARCHAR(20)     NOT NULL,   -- running | success | failed | dry_run
-        error_summary               NVARCHAR(MAX)    NULL,
-        report_output_path          NVARCHAR(1000)   NULL,
+    -- transaction identity / classification
+    enrollment_event_id             NVARCHAR(100)        NULL,   -- enrollee/enrollmentEventId (indexed, NOT unique)
+    enrollment_action_code          NVARCHAR(50)         NULL,   -- enrollment/actionCode (BGN08)
+    enrollee_event_type_code        NVARCHAR(50)         NULL,   -- enrollmentEvents/eventTypeLkp (INS03)
+    enrollee_event_reason_code      NVARCHAR(50)         NULL,   -- enrollmentEvents/eventReasonLkp (INS04)
+    maintenance_type_code           NVARCHAR(50)         NULL,   -- healthCoverage/maintenanceTypeCode (HD01)
+    additional_maint_reason_code    NVARCHAR(50)         NULL,   -- memberReportingCategory/additionalMaintReason
+    outbound_transaction_type       NVARCHAR(30)         NULL,   -- derived: ADD|CHANGE|CANCEL|TERM|CANCEL_OR_TERM|REINSTATE
+    request_submit_timestamp        NVARCHAR(100)        NULL,   -- raw text; format not yet confirmed
+    payment_txn_id                  NVARCHAR(100)        NULL,
 
-        CONSTRAINT PK_outbound_automation_run_log PRIMARY KEY (load_run_id)
-    );
-END;
+    -- policy / member identifiers
+    policy_id                       NVARCHAR(100)        NOT NULL, -- exchgAssignedPolicyID
+    previous_policy_id              NVARCHAR(100)        NULL,
+    member_id                       NVARCHAR(100)        NOT NULL, -- exchgIndivIdentifier
+    subscriber_id                   NVARCHAR(100)        NULL,     -- exchgSubscriberIdentifier
+    issuer_subscriber_identifier    NVARCHAR(100)        NULL,
+    issuer_indiv_identifier         NVARCHAR(100)        NULL,
+    subscriber_flag                 NVARCHAR(20)         NULL,
+    relationship                    NVARCHAR(50)         NULL,
+    member_first_name               NVARCHAR(200)        NULL,     -- PII
+    member_last_name                NVARCHAR(200)        NULL,     -- PII
+
+    -- coverage / plan
+    insurance_type_code             NVARCHAR(50)         NULL,
+    insurance_type                  NVARCHAR(50)         NULL,     -- configured map; NULL when code unknown
+    insurer_cms_plan_id             NVARCHAR(50)         NULL,
+    class_of_contract_code          NVARCHAR(50)         NULL,
+    health_coverage_policy_no       NVARCHAR(100)        NULL,
+    household_or_employee_case_id   NVARCHAR(100)        NULL,
+    benefit_effective_date          DATE                 NULL,     -- benefitEffectiveBeginDate
+    benefit_end_date                DATE                 NULL,
+    member_maint_effective_date     DATE                 NULL,
+    last_premium_paid_date          DATE                 NULL,
+    coverage_year                   INT                  NULL,     -- year(benefit_effective_date) only
+    coverage_year_source            NVARCHAR(50)         NULL,
+
+    -- amounts / reporting category
+    total_premium_amount            DECIMAL(18,4)        NULL,
+    individual_responsibility_amount DECIMAL(18,4)       NULL,
+    aptc_amount                     DECIMAL(18,4)        NULL,
+    health_coverage_premium_amount  DECIMAL(18,4)        NULL,
+    rating_area                     NVARCHAR(50)         NULL,
+    source_exchg_id                 NVARCHAR(100)        NULL,
+
+    -- enrollment control totals (QTY)
+    qtyn                            NVARCHAR(50)         NULL,
+    qtyy                            NVARCHAR(50)         NULL,
+    qtyt                            NVARCHAR(50)         NULL,
+
+    -- lossless source record (header + GS_Info + enrollment context + full enrollee subtree)
+    source_xml_json                 NVARCHAR(MAX)        NOT NULL,
+
+    CONSTRAINT PK_outbound_automation PRIMARY KEY CLUSTERED (id),
+    CONSTRAINT UQ_outbound_automation_file_row UNIQUE (file_hash, row_number_in_file)
+);
 GO
 
-
--- -----------------------------------------------------------------------------
--- 3. dbo.outbound_automation_file_log
--- -----------------------------------------------------------------------------
-IF OBJECT_ID(N'dbo.outbound_automation_file_log', N'U') IS NULL
-BEGIN
-    CREATE TABLE dbo.outbound_automation_file_log (
-        id                      BIGINT IDENTITY(1,1) NOT NULL,
-        load_run_id             NVARCHAR(100)        NOT NULL,
-        loaded_at               DATETIME2(3)         NOT NULL,
-
-        issuer                  NVARCHAR(20)         NOT NULL,
-        folder_year             INT                  NOT NULL,
-        folder_month            INT                  NOT NULL,
-        filename_file_year      INT                  NULL,
-        filename_file_month     INT                  NULL,
-
-        source_file             NVARCHAR(500)        NOT NULL,
-        source_file_path        NVARCHAR(1000)       NOT NULL,
-        file_hash               NVARCHAR(128)        NOT NULL,
-        file_size_bytes         BIGINT               NULL,
-
-        parse_status            NVARCHAR(20)         NOT NULL,   -- loaded | skipped_duplicate | failed | dry_run
-        row_count               INT                  NOT NULL DEFAULT 0,
-        parse_duration_ms       INT                  NULL,
-        error_message           NVARCHAR(MAX)        NULL,
-
-        CONSTRAINT PK_outbound_automation_file_log PRIMARY KEY CLUSTERED (id),
-        CONSTRAINT UQ_outbound_automation_file_log_hash UNIQUE (file_hash)
-    );
-END;
+CREATE INDEX IX_outbound_automation_source_file
+    ON dbo.outbound_automation (source_file);
+CREATE INDEX IX_outbound_automation_load_run_id
+    ON dbo.outbound_automation (load_run_id);
+CREATE INDEX IX_outbound_automation_issuer_folder
+    ON dbo.outbound_automation (issuer, folder_year, folder_month);
+CREATE INDEX IX_outbound_automation_issuer_filename_month
+    ON dbo.outbound_automation (issuer, filename_file_year, filename_file_month);
+CREATE INDEX IX_outbound_automation_issuer_coverage_txn
+    ON dbo.outbound_automation (issuer, coverage_year, outbound_transaction_type);
+CREATE INDEX IX_outbound_automation_policy_lifecycle
+    ON dbo.outbound_automation (policy_id, member_id, request_submit_timestamp);
+CREATE INDEX IX_outbound_automation_member_id
+    ON dbo.outbound_automation (member_id);
+CREATE INDEX IX_outbound_automation_enrollment_event_id
+    ON dbo.outbound_automation (enrollment_event_id);
+CREATE INDEX IX_outbound_automation_previous_policy_id
+    ON dbo.outbound_automation (previous_policy_id);
+CREATE INDEX IX_outbound_automation_issuer_plan
+    ON dbo.outbound_automation (issuer, insurer_cms_plan_id);
 GO
 
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_file_log_run'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation_file_log')
-)
-    CREATE INDEX IX_outbound_automation_file_log_run
-        ON dbo.outbound_automation_file_log (load_run_id);
+-- -----------------------------------------------------------------------------
+-- 3. dbo.outbound_automation_monthly_premium — one row per <premium> element
+-- -----------------------------------------------------------------------------
+CREATE TABLE dbo.outbound_automation_monthly_premium (
+    id                      BIGINT IDENTITY(1,1) NOT NULL,
+    load_run_id             NVARCHAR(100)        NOT NULL,
+    loaded_at               DATETIME2(3)         NOT NULL
+        CONSTRAINT DF_outbound_automation_monthly_premium_loaded_at DEFAULT SYSUTCDATETIME(),
+
+    -- parent lineage
+    file_hash               NVARCHAR(128)        NOT NULL,
+    row_number_in_file      INT                  NOT NULL,
+    premium_seq             INT                  NOT NULL,   -- 1..N document order within parent
+
+    -- denormalized parent keys
+    issuer                  NVARCHAR(20)         NOT NULL,
+    policy_id               NVARCHAR(100)        NOT NULL,
+    member_id               NVARCHAR(100)        NOT NULL,
+    enrollment_event_id     NVARCHAR(100)        NULL,
+
+    -- premium values
+    month_start_date        DATE                 NULL,
+    premium_year            INT                  NULL,
+    premium_month           INT                  NULL,
+    gross_premium_amount    DECIMAL(18,4)        NULL,
+    aptc_amount             DECIMAL(18,4)        NULL,
+    net_premium_amount      DECIMAL(18,4)        NULL,
+
+    -- lossless <premium> element (unknown/future tags, e.g. state subsidy)
+    premium_json            NVARCHAR(MAX)        NOT NULL,
+
+    CONSTRAINT PK_outbound_automation_monthly_premium PRIMARY KEY CLUSTERED (id),
+    CONSTRAINT UQ_outbound_automation_monthly_premium_row
+        UNIQUE (file_hash, row_number_in_file, premium_seq),
+    CONSTRAINT FK_outbound_automation_monthly_premium_parent
+        FOREIGN KEY (file_hash, row_number_in_file)
+        REFERENCES dbo.outbound_automation (file_hash, row_number_in_file)
+);
 GO
 
-IF NOT EXISTS (
-    SELECT 1 FROM sys.indexes
-    WHERE name = N'IX_outbound_automation_file_log_source_file'
-      AND object_id = OBJECT_ID(N'dbo.outbound_automation_file_log')
-)
-    CREATE INDEX IX_outbound_automation_file_log_source_file
-        ON dbo.outbound_automation_file_log (source_file);
+CREATE INDEX IX_outbound_automation_monthly_premium_policy_period
+    ON dbo.outbound_automation_monthly_premium (policy_id, premium_year, premium_month);
+CREATE INDEX IX_outbound_automation_monthly_premium_event
+    ON dbo.outbound_automation_monthly_premium (enrollment_event_id);
+CREATE INDEX IX_outbound_automation_monthly_premium_run
+    ON dbo.outbound_automation_monthly_premium (load_run_id);
+GO
+
+-- -----------------------------------------------------------------------------
+-- 4. dbo.outbound_automation_run_log
+-- -----------------------------------------------------------------------------
+CREATE TABLE dbo.outbound_automation_run_log (
+    load_run_id                 NVARCHAR(100)    NOT NULL,
+    started_at                  DATETIME2(3)     NOT NULL,
+    completed_at                DATETIME2(3)     NULL,
+    run_mode                    NVARCHAR(20)     NOT NULL,   -- dry_run | load
+    source_mode                 NVARCHAR(20)     NOT NULL,   -- local
+    year_filter                 NVARCHAR(50)     NULL,
+    issuer_filter               NVARCHAR(200)    NULL,
+    month_filter                NVARCHAR(50)     NULL,
+
+    parser_version              NVARCHAR(50)     NULL,
+    runner_version              NVARCHAR(50)     NULL,
+    git_commit                  NVARCHAR(100)    NULL,
+
+    files_discovered            INT              NOT NULL
+        CONSTRAINT DF_outbound_automation_run_log_files_discovered DEFAULT 0,
+    files_parsed                INT              NOT NULL
+        CONSTRAINT DF_outbound_automation_run_log_files_parsed DEFAULT 0,
+    files_loaded                INT              NOT NULL
+        CONSTRAINT DF_outbound_automation_run_log_files_loaded DEFAULT 0,
+    files_skipped_duplicate     INT              NOT NULL
+        CONSTRAINT DF_outbound_automation_run_log_files_skipped_duplicate DEFAULT 0,
+    files_failed                INT              NOT NULL
+        CONSTRAINT DF_outbound_automation_run_log_files_failed DEFAULT 0,
+    rows_parsed                 INT              NOT NULL
+        CONSTRAINT DF_outbound_automation_run_log_rows_parsed DEFAULT 0,
+    rows_inserted               INT              NOT NULL
+        CONSTRAINT DF_outbound_automation_run_log_rows_inserted DEFAULT 0,
+    rows_skipped                INT              NOT NULL
+        CONSTRAINT DF_outbound_automation_run_log_rows_skipped DEFAULT 0,
+    premium_rows_inserted       INT              NOT NULL
+        CONSTRAINT DF_outbound_automation_run_log_premium_rows_inserted DEFAULT 0,
+    total_warning_count         INT              NULL,
+    unknown_path_count          INT              NULL,
+
+    status                      NVARCHAR(20)     NOT NULL,   -- running | success | failed
+    error_summary               NVARCHAR(MAX)    NULL,
+    report_output_path          NVARCHAR(1000)   NULL,
+
+    CONSTRAINT PK_outbound_automation_run_log PRIMARY KEY (load_run_id)
+);
+GO
+
+-- -----------------------------------------------------------------------------
+-- 5. dbo.outbound_automation_file_log
+-- -----------------------------------------------------------------------------
+CREATE TABLE dbo.outbound_automation_file_log (
+    id                      BIGINT IDENTITY(1,1) NOT NULL,
+    load_run_id             NVARCHAR(100)        NOT NULL,
+    loaded_at               DATETIME2(3)         NOT NULL,
+
+    issuer                  NVARCHAR(20)         NOT NULL,
+    folder_year             INT                  NOT NULL,
+    folder_month            INT                  NOT NULL,
+    filename_file_year      INT                  NULL,
+    filename_file_month     INT                  NULL,
+
+    source_file             NVARCHAR(500)        NOT NULL,
+    source_file_path        NVARCHAR(1000)       NOT NULL,
+    file_hash               NVARCHAR(128)        NOT NULL,
+    file_size_bytes         BIGINT               NULL,
+
+    txn_create_datetime     DATETIME2(0)         NULL,   -- enrollments/txnCreateDateTime
+    job_execution_id        NVARCHAR(100)        NULL,   -- enrollments/jobExecutionId
+
+    parse_status            NVARCHAR(20)         NOT NULL,   -- loaded | failed
+    row_count               INT                  NOT NULL
+        CONSTRAINT DF_outbound_automation_file_log_row_count DEFAULT 0,
+    premium_row_count       INT                  NULL,
+    unknown_path_count      INT                  NULL,
+    parse_duration_ms       INT                  NULL,
+    error_message           NVARCHAR(MAX)        NULL,
+
+    CONSTRAINT PK_outbound_automation_file_log PRIMARY KEY CLUSTERED (id),
+    CONSTRAINT UQ_outbound_automation_file_log_hash UNIQUE (file_hash)
+);
+GO
+
+CREATE INDEX IX_outbound_automation_file_log_run
+    ON dbo.outbound_automation_file_log (load_run_id);
+CREATE INDEX IX_outbound_automation_file_log_source_file
+    ON dbo.outbound_automation_file_log (source_file);
+CREATE INDEX IX_outbound_automation_file_log_job
+    ON dbo.outbound_automation_file_log (job_execution_id);
+GO
+
+SET NOEXEC OFF;
 GO
