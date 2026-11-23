@@ -1,8 +1,8 @@
 
 
 
-.\.venv\Scripts\python.exe run_outbound_automation_load.py --dry-run --issuer 15105 --year 2026 --month 10
--- =============================================================================
+git cat-file -t 564d81068ea0628da3c352c37bff7c89e084f8cc
+    -- =============================================================================
 -- Azure SQL RECOVERY DDL: dbo.outbound_automation_monthly_premium
 -- =============================================================================
 -- Status: MANUAL EXECUTION ONLY (SSMS).
