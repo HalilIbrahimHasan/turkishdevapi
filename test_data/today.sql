@@ -1,8 +1,7 @@
 
 
 
-.\.venv\Scripts\python.exe -m pytest --version
-
+.\.venv\Scripts\python.exe run_outbound_automation_load.py --dry-run --issuer 15105 --year 2026 --month 10
 -- =============================================================================
 -- Azure SQL RECOVERY DDL: dbo.outbound_automation_monthly_premium
 -- =============================================================================
