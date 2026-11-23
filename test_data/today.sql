@@ -1,11 +1,6 @@
-SELECT 
-    COLUMN_NAME,
-    DATA_TYPE,
-    IS_NULLABLE
-FROM INFORMATION_SCHEMA.COLUMNS
-WHERE TABLE_SCHEMA = 'dbo'
-  AND TABLE_NAME = 'outbound_automation'
-ORDER BY ORDINAL_POSITION;
+
+
+python -m pytest tests/test_outbound_automation.py -v
 
 
 -- =============================================================================
