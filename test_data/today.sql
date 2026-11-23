@@ -1,7 +1,7 @@
 
 
-python -m pytest tests/test_outbound_automation.py -v
 
+.\.venv\Scripts\python.exe -m pytest --version
 
 -- =============================================================================
 -- Azure SQL RECOVERY DDL: dbo.outbound_automation_monthly_premium
