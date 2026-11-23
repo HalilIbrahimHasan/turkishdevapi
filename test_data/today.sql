@@ -1,9 +1,6 @@
 
-
-
-.\.venv\Scripts\python.exe run_outbound_automation_load.py --download --issuer 15105 --year 2026 --month 10
-
-    .\.venv\Scripts\python.exe run_outbound_automation_load.py --dry-run --issuer 15105 --year 2026 --month 10
+OUTBOUND_AUTOMATION_ENABLED=true
+OUTBOUND_SOURCE_JSON_PII_POLICY=redact
 
 
 
