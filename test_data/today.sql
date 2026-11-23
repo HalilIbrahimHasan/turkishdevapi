@@ -1,4 +1,11 @@
+SELECT COUNT(*) AS main_rows
+FROM dbo.outbound_automation;
 
+SELECT COUNT(*) AS file_log_rows
+FROM dbo.outbound_automation_file_log;
+
+SELECT COUNT(*) AS run_log_rows
+FROM dbo.outbound_automation_run_log;
 
 
 -- =============================================================================
