@@ -1,8 +1,8 @@
 
 
 
-git cat-file -t 564d81068ea0628da3c352c37bff7c89e084f8cc
-    -- =============================================================================
+git cat-file -e 564d81068ea0628da3c352c37bff7c89e084f8cc
+echo $LASTEXITCODE    -- =============================================================================
 -- Azure SQL RECOVERY DDL: dbo.outbound_automation_monthly_premium
 -- =============================================================================
 -- Status: MANUAL EXECUTION ONLY (SSMS).
