@@ -1,14 +1,23 @@
-SELECT COUNT(*) AS main_rows
-FROM dbo.outbound_automation;
 
-SELECT COUNT(*) AS file_log_rows
-FROM dbo.outbound_automation_file_log;
 
-SELECT COUNT(*) AS run_log_rows
-FROM dbo.outbound_automation_run_log;
+SELECT
+    t.name AS table_name
+FROM sys.tables t
+WHERE t.schema_id = SCHEMA_ID('dbo')
+  AND t.name IN (
+      'outbound_automation',
+      'outbound_automation_monthly_premium',
+      'outbound_automation_run_log',
+      'outbound_automation_file_log'
+  )
+ORDER BY t.name;
 
-DELETE FROM dbo.outbound_automation_file_log;
-DELETE FROM dbo.outbound_automation_run_log;
+
+SELECT
+    OBJECT_ID('dbo.outbound_automation') AS main_table,
+    OBJECT_ID('dbo.outbound_automation_monthly_premium') AS premium_table,
+    OBJECT_ID('dbo.outbound_automation_run_log') AS run_log,
+    OBJECT_ID('dbo.outbound_automation_file_log') AS file_log;
 
 
 -- =============================================================================
