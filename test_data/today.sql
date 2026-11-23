@@ -7,6 +7,9 @@ FROM dbo.outbound_automation_file_log;
 SELECT COUNT(*) AS run_log_rows
 FROM dbo.outbound_automation_run_log;
 
+DELETE FROM dbo.outbound_automation_file_log;
+DELETE FROM dbo.outbound_automation_run_log;
+
 
 -- =============================================================================
 -- Azure SQL DDL v2: outbound_automation (TO files) — FINAL SCHEMA PROPOSAL
